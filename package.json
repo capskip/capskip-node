@@ -1,0 +1,50 @@
+{
+  "name": "capskip",
+  "version": "1.0.2",
+  "description": "Node.js SDK for the CapSkip local captcha solver",
+  "main": "src/index.js",
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch"
+  },
+  "keywords": [
+    "captcha",
+    "captcha-solver",
+    "recaptcha",
+    "cloudflare",
+    "turnstile",
+    "capskip",
+    "automation"
+  ],
+  "author": "CapSkip <support@capskip.com>",
+  "license": "MIT",
+  "homepage": "https://capskip.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capskip/capskip-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/capskip/capskip-node/issues"
+  },
+  "files": [
+    "src",
+    "types",
+    "docs",
+    "examples",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ]
+}

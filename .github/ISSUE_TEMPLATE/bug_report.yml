@@ -1,0 +1,86 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in the CapSkip Node.js SDK
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+
+  - type: dropdown
+    id: captcha-type
+    attributes:
+      label: Captcha type
+      options:
+        - Image CAPTCHA
+        - reCAPTCHA v2
+        - reCAPTCHA v3
+        - Cloudflare Turnstile
+        - Other / not captcha-specific
+    validations:
+      required: true
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version
+      description: Output of `node -e "console.log(require('capskip').version)"`
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+      placeholder: "20.11.0"
+    validations:
+      required: true
+
+  - type: input
+    id: capskip-port
+    attributes:
+      label: CapSkip port
+      placeholder: "8080"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code snippet or steps. Redact sitekeys/tokens.
+      placeholder: |
+        1. CapSkip running on port 8080
+        2. Run: node examples/recaptcha.js
+        3. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Error / stack trace
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: CapSkip desktop app was running when the error occurred
+          required: true
+        - label: I searched existing issues and did not find a duplicate
+          required: true

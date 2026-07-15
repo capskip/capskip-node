@@ -1,0 +1,44 @@
+name: Feature Request
+description: Suggest an improvement to the CapSkip Node.js SDK
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CapSkip supports: image captcha, reCAPTCHA v2/v3, and Cloudflare Turnstile.
+        Confirm new captcha types are supported by [CapSkip API](https://capskip.com/api-docs/) before requesting.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this solve? What are you trying to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like the SDK to behave?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: This feature is supported by CapSkip API (or is SDK-only improvement)
+          required: true
+        - label: I searched existing issues and did not find a duplicate
+          required: true

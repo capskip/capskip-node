@@ -89,6 +89,43 @@ function applyPollResult(result, polled) {
   return result;
 }
 
+// GeeTest answers come back as a JSON string in `request`, keyed with the
+// geetest_ prefix that the target site's own form fields use.
+const GEETEST_FIELDS = [
+  ['challenge', 'geetest_challenge'],
+  ['validate', 'geetest_validate'],
+  ['seccode', 'geetest_seccode'],
+];
+
+/**
+ * Expand the GeeTest answer into `challenge` / `validate` / `seccode`.
+ *
+ * `code` keeps the raw JSON string so callers that forward it verbatim (or that
+ * were written against another solver's API) keep working. If it does not parse,
+ * the result is returned untouched rather than masking the server's reply.
+ */
+function applyGeetestSolution(result) {
+  let payload;
+  try {
+    payload = JSON.parse(result.code || '');
+  } catch (err) {
+    return result;
+  }
+
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return result;
+  }
+
+  for (const [short, prefixed] of GEETEST_FIELDS) {
+    const value = payload[prefixed] !== undefined ? payload[prefixed] : payload[short];
+    if (value !== undefined && value !== null) {
+      result[short] = value;
+    }
+  }
+
+  return result;
+}
+
 // CapSkip's in.php returns OK|<id> by default, or {"status":1,"request":"<id>"}
 // when the submit carried json=1. Accept both so submitting with json=1 works.
 function parseSubmitResponse(response) {
@@ -112,7 +149,7 @@ function parseSubmitResponse(response) {
   throw new ApiException(`cannot recognize response ${response}`);
 }
 
-/** Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile). */
+/** Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile, GeeTest v3). */
 class CapSkip {
   constructor({
     apiKey = 'capskip',
@@ -165,6 +202,32 @@ class CapSkip {
       method: 'turnstile',
       poll_json: 1,
     });
+  }
+
+  /**
+   * Solve a GeeTest v3 slider.
+   *
+   * `gt` is static per site; `challenge` is single-use and expires in about a
+   * minute, so fetch a fresh pair immediately before calling this. Pass
+   * `api_server` when the site uses a non-default GeeTest API server domain.
+   *
+   * The result carries the raw answer as `code` (a JSON string) plus the parsed
+   * `challenge`, `validate`, and `seccode` fields to post back to the target site.
+   */
+  async geetest(gt, challenge, url, options = {}) {
+    // Like reCAPTCHA, this is a real browser solve (load, slide, verify) and can
+    // retry internally, so it gets the longer of the two timeouts unless the
+    // caller asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      gt,
+      challenge,
+      url,
+      ...options,
+      method: 'geetest',
+      poll_json: 1,
+    });
+    return applyGeetestSolution(result);
   }
 
   async solve(options = {}) {
@@ -252,6 +315,9 @@ class CapSkip {
     if (method === 'turnstile') {
       return prepareSubmitParams(params, 'turnstile');
     }
+    if (method === 'geetest') {
+      return prepareSubmitParams(params, 'geetest');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -263,4 +329,5 @@ module.exports = {
   parsePollResponse,
   parseSubmitResponse,
   applyPollResult,
+  applyGeetestSolution,
 };

@@ -6,7 +6,7 @@
 
 Official Node.js client for the [CapSkip](https://capskip.com) **local** captcha solver.
 
-CapSkip runs on your machine and exposes a standard captcha-solver HTTP API (the familiar `in.php` / `res.php` endpoints). This SDK wraps that API with clean, familiar method names, so you can solve captchas locally — no cloud service and no per-solve API fees beyond your CapSkip license.
+CapSkip runs on your machine and exposes a standard captcha-solver HTTP API (the familiar `in.php` / `res.php` endpoints). This SDK wraps that API with clean, familiar method names, so you can solve captchas locally — no per-solve API fees beyond your CapSkip license.
 
 ---
 
@@ -70,6 +70,7 @@ Every solve method returns a Promise — use `await` or `.then()`.
 | reCAPTCHA v3 Enterprise | `solver.recaptcha(sitekey, url, { version: 'v3', enterprise: 1 })` |
 | Cloudflare Turnstile (widget) | `solver.turnstile(sitekey, url)` |
 | Cloudflare Turnstile (challenge page) | `solver.turnstile(sitekey, url, { data, pagedata })` |
+| GeeTest v3 (slide) | `solver.geetest(gt, challenge, url)` |
 
 ---
 
@@ -97,7 +98,7 @@ const solver = new CapSkip({
   host: '127.0.0.1',        // CapSkip host
   port: 8080,               // CapSkip port from app settings
   defaultTimeout: 120,      // seconds — image captcha polling timeout
-  recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile polling timeout
+  recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest polling timeout
   pollingInterval: 5,       // max seconds between res.php polls (starts at 0.25s, backs off to this)
 });
 ```
@@ -161,7 +162,23 @@ const v3 = await solver.recaptcha('...', 'https://example.com', {
 const result = await solver.turnstile('0x4AAAAAAA...', 'https://example.com');
 ```
 
-### With a proxy (reCAPTCHA & Turnstile only)
+### GeeTest v3
+
+`gt` is static per site, but `challenge` is single-use and expires in about a
+minute — fetch a fresh pair right before solving.
+
+```js
+const result = await solver.geetest(
+  '81388ea1fc187e0c335c0a8907ff2625',
+  '7cf6a8b1a2c34d5e6f7089abcdef0123',
+  'https://example.com/login',
+);
+
+// Post these back exactly as the site's own front-end would
+result.challenge, result.validate, result.seccode;
+```
+
+### With a proxy (reCAPTCHA, Turnstile & GeeTest only)
 
 ```js
 // Proxy is not supported for image captcha
@@ -207,6 +224,9 @@ Every solve method resolves to:
   userAgent: '...',      // Turnstile only — use when submitting challenge-page tokens
 }
 ```
+
+GeeTest additionally expands its answer into `challenge`, `validate`, and
+`seccode`, while `code` keeps the raw JSON string.
 
 ---
 

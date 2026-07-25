@@ -21,12 +21,24 @@ const TURNSTILE_SUBMIT = new Set([
   'proxy', 'proxytype',
 ]);
 
+const GEETEST_SUBMIT = new Set([
+  'method', 'gt', 'challenge', 'pageurl', 'api_server', 'json',
+  'proxy', 'proxytype',
+]);
+
+// The only values CapSkip maps to a proxy scheme; it answers
+// ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
+// case-insensitively, as the server does.
+const PROXY_TYPES = ['HTTP', 'HTTPS', 'SOCKS5', 'SOCKS5H'];
+
 const PARAM_ALIASES = {
   url: 'pageurl',
   score: 'min_score',
   minScore: 'min_score',
   datas: 'data-s',
   data_s: 'data-s',
+  apiServer: 'api_server',
+  api_subdomain: 'api_server',
 };
 
 function has(obj, key) {
@@ -145,6 +157,38 @@ function validateTurnstileSubmit(params) {
   }
 }
 
+function validateGeetestSubmit(params) {
+  // All three are documented as required. gt is static per site, challenge is
+  // single-use and expires in about a minute; without them CapSkip answers
+  // ERROR_BAD_PARAMETERS, and without pageurl ERROR_PAGEURL. Fail locally so a
+  // missing value does not cost a round-trip.
+  for (const key of ['gt', 'challenge', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for GeeTest v3.`);
+    }
+  }
+
+  const unknown = unknownKeys(params, GEETEST_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for GeeTest: ${reprList(unknown)}.`,
+    );
+  }
+}
+
+function validateProxyType(params) {
+  const proxytype = params.proxytype;
+  if (proxytype === undefined || proxytype === null || proxytype === '') {
+    return;
+  }
+  if (!PROXY_TYPES.includes(String(proxytype).toUpperCase())) {
+    throw new ValidationException(
+      `Unsupported proxytype '${proxytype}'. `
+      + `CapSkip accepts: ${PROXY_TYPES.join(', ')}.`,
+    );
+  }
+}
+
 function prepareSubmitParams(params, captchaType, version = 'v2') {
   let prepared = applyParamAliases(params);
   prepared = applyProxy(prepared);
@@ -155,6 +199,13 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
     validateRecaptchaSubmit(prepared, version);
   } else if (captchaType === 'turnstile') {
     validateTurnstileSubmit(prepared);
+  } else if (captchaType === 'geetest') {
+    validateGeetestSubmit(prepared);
+  }
+
+  // Skipped for 'normal', which rejects proxy outright with a clearer message.
+  if (captchaType !== 'normal') {
+    validateProxyType(prepared);
   }
 
   return prepared;
@@ -165,11 +216,15 @@ module.exports = {
   RECAPTCHA_V2_SUBMIT,
   RECAPTCHA_V3_SUBMIT,
   TURNSTILE_SUBMIT,
+  GEETEST_SUBMIT,
+  PROXY_TYPES,
   PARAM_ALIASES,
   applyParamAliases,
   applyProxy,
   validateNormalSubmit,
   validateRecaptchaSubmit,
   validateTurnstileSubmit,
+  validateGeetestSubmit,
+  validateProxyType,
   prepareSubmitParams,
 };

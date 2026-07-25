@@ -136,6 +136,7 @@ node examples/recaptcha.js
 | `image_captcha.js` | Image captcha from file, URL, or base64 |
 | `recaptcha.js` | reCAPTCHA v2, v3, invisible, enterprise, proxy |
 | `turnstile.js` | Cloudflare Turnstile widget and challenge page |
+| `geetest.js` | GeeTest v3 slider, including fetching a fresh `gt`/`challenge` pair |
 | `async_example.js` | Parallel solving |
 | `verify_connection.js` | Check CapSkip is running |
 

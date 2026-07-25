@@ -1,6 +1,6 @@
 // Type definitions for the CapSkip Node.js SDK.
 
-/** Proxy passed to reCAPTCHA / Turnstile solves. */
+/** Proxy passed to reCAPTCHA / Turnstile / GeeTest solves. */
 export interface Proxy {
   /** Proxy type: `HTTP`, `HTTPS`, `SOCKS5`, or `SOCKS5H`. */
   type: string;
@@ -18,7 +18,7 @@ export interface CapSkipOptions {
   port?: number;
   /** Seconds to poll an image captcha before timing out. Default `120`. */
   defaultTimeout?: number;
-  /** Seconds to poll reCAPTCHA / Turnstile before timing out. Default `300`. */
+  /** Seconds to poll reCAPTCHA / Turnstile / GeeTest before timing out. Default `300`. */
   recaptchaTimeout?: number;
   /** Max seconds between polls; starts at `0.25` and backs off to this. Default `5`. */
   pollingInterval?: number;
@@ -28,10 +28,20 @@ export interface CapSkipOptions {
 export interface SolveResult {
   /** CapSkip's internal id for this solve. */
   captchaId: string;
-  /** The solution: recognized text for images, a token otherwise. */
+  /**
+   * The solution: recognized text for images, a token otherwise. For GeeTest
+   * this is the raw JSON string CapSkip returns — prefer the parsed
+   * `challenge` / `validate` / `seccode` fields below.
+   */
   code: string;
   /** Turnstile only — the User-Agent to use when submitting the token. */
   userAgent?: string;
+  /** GeeTest only — the `geetest_challenge` value to post back. */
+  challenge?: string;
+  /** GeeTest only — the `geetest_validate` value to post back. */
+  validate?: string;
+  /** GeeTest only — the `geetest_seccode` value to post back. */
+  seccode?: string;
 }
 
 /** Extra options for {@link CapSkip.normal}. */
@@ -84,6 +94,23 @@ export interface TurnstileOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.geetest}. */
+export interface GeetestOptions {
+  /** GeeTest API server domain (alias for `api_server`). */
+  apiServer?: string;
+  /** GeeTest API server domain (alias for `api_server`). */
+  api_subdomain?: string;
+  /** GeeTest API server domain, e.g. `"api-na.geetest.com"`. */
+  api_server?: string;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -111,6 +138,18 @@ export class CapSkip {
   recaptcha(sitekey: string, url: string, options?: RecaptchaOptions): Promise<SolveResult>;
   /** Solve Cloudflare Turnstile (widget or challenge page). */
   turnstile(sitekey: string, url: string, options?: TurnstileOptions): Promise<SolveResult>;
+  /**
+   * Solve a GeeTest v3 slider.
+   *
+   * `gt` is static per site; `challenge` is single-use and expires in about a
+   * minute, so fetch a fresh pair immediately before calling this.
+   */
+  geetest(
+    gt: string,
+    challenge: string,
+    url: string,
+    options?: GeetestOptions,
+  ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;
   /** Submit a captcha without polling; resolves to the captcha id. */

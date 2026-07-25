@@ -22,8 +22,9 @@ method returns a `Promise`.
 | reCAPTCHA v2 | `recaptcha(sitekey, url)` | `userrecaptcha` |
 | reCAPTCHA v3 | `recaptcha(sitekey, url, { version: 'v3' })` | `userrecaptcha` + `version=v3` |
 | Cloudflare Turnstile | `turnstile()` | `turnstile` |
+| GeeTest v3 (slide) | `geetest()` | `geetest` |
 
-**Proxy** is supported for reCAPTCHA and Turnstile only — not for image captcha.
+**Proxy** is supported for reCAPTCHA, Turnstile, and GeeTest — not for image captcha.
 
 ---
 
@@ -206,6 +207,66 @@ const challenge = await solver.turnstile('0x4AAAAAAA...', 'https://example.com',
 
 ---
 
+## 5. GeeTest v3 — `geetest(gt, challenge, url, { ... })`
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `geetest` |
+| `gt` | string | Yes | Static per-site GeeTest id |
+| `challenge` | string | Yes | Single-use challenge token |
+| `pageurl` | string | Yes | Full page URL |
+| `api_server` | string | No | GeeTest API server domain, e.g. `api-na.geetest.com` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+### Getting `gt` and `challenge`
+
+Both come from the target site, which fetches them from an endpoint returning
+`{"gt": "...", "challenge": "..."}` (often `.../register.php` or a `gettype`/`get.php`
+request). Find it in DevTools → Network, or read them out of the
+`initGeetest({ gt, challenge })` call in the page scripts.
+
+> **`challenge` is single-use and expires in about a minute.** Fetch a fresh pair
+> immediately before each solve. If a solve comes back with a bad-challenge error,
+> request a new pair and retry — reusing one never succeeds.
+
+### SDK usage
+
+```js
+const result = await solver.geetest(
+  '81388ea1fc187e0c335c0a8907ff2625',
+  '7cf6a8b1a2c34d5e6f7089abcdef0123',
+  'https://example.com/login',
+);
+
+result.challenge;   // geetest_challenge
+result.validate;    // geetest_validate
+result.seccode;     // geetest_seccode
+result.code;        // the same answer as a raw JSON string
+```
+
+Post the three fields back exactly as the site's own front-end would:
+
+```js
+await fetch(LOGIN_URL, {
+  method: 'POST',
+  body: new URLSearchParams({
+    geetest_challenge: result.challenge,
+    geetest_validate: result.validate,
+    geetest_seccode: result.seccode,
+  }),
+});
+```
+
+GeeTest is a real browser solve, so it uses the longer `recaptchaTimeout` budget
+rather than `defaultTimeout`.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -215,6 +276,19 @@ Every solve method resolves to:
   captchaId: '12345',
   code: 'TOKEN_OR_TEXT',
   userAgent: '...',   // Turnstile only, when json=1 poll includes it
+}
+```
+
+GeeTest additionally expands its answer into `challenge`, `validate`, and
+`seccode` (`code` keeps the raw JSON string):
+
+```js
+{
+  captchaId: '12345',
+  code: '{"geetest_challenge":"...","geetest_validate":"...","geetest_seccode":"..."}',
+  challenge: '...',
+  validate: '...',
+  seccode: '...',
 }
 ```
 
@@ -231,6 +305,8 @@ Convenience aliases mapped before sending to CapSkip:
 | `minScore` | `min_score` |
 | `datas` | `data-s` |
 | `data_s` | `data-s` |
+| `apiServer` | `api_server` |
+| `api_subdomain` | `api_server` |
 | `proxy` object | `proxy` + `proxytype` strings |
 
 ```js

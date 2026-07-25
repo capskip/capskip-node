@@ -1,6 +1,6 @@
 {
   "name": "capskip",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Node.js SDK for the CapSkip local captcha solver",
   "main": "src/index.js",
   "types": "types/index.d.ts",
@@ -26,6 +26,7 @@
     "recaptcha",
     "cloudflare",
     "turnstile",
+    "geetest",
     "capskip",
     "automation"
   ],

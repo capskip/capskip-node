@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-26
+
+### Added
+
+- **GeeTest v3 (slide) support** via `geetest(gt, challenge, url, options)`.
+  Accepts the optional `api_server` domain override and the usual `proxy`
+  option. The result exposes the answer as the parsed `challenge`, `validate`,
+  and `seccode` fields, while `code` keeps the raw JSON string CapSkip returns.
+- Parameter aliases `apiServer` and `api_subdomain` for `api_server`.
+- TypeScript definitions for `geetest()`, `GeetestOptions`, and the new
+  `SolveResult` fields.
+- `proxytype` is now validated against the values CapSkip accepts (`HTTP`,
+  `HTTPS`, `SOCKS5`, `SOCKS5H`, case-insensitive) for every proxy-capable captcha
+  type. `SOCKS4` and other values previously reached the server and came back as
+  `ERROR_BAD_PARAMETERS`; they now raise `ValidationException` locally.
+
 ## [1.0.2] - 2026-07-15
 
 ### Fixed

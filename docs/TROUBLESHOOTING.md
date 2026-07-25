@@ -152,6 +152,48 @@ const result = await solver.recaptcha('...', '...', { proxy });
 
 ---
 
+## GeeTest keeps failing with a bad-challenge error
+
+**Symptom:** `geetest()` rejects with `ApiException` (or times out) even though
+`gt` and `challenge` were copied correctly from the page.
+
+**Cause:** The `challenge` value is **single-use and expires in about a minute**.
+A pair copied out of DevTools minutes earlier, cached in a config file, or reused
+across two solves is already dead.
+
+**Fix:** Fetch a fresh pair programmatically immediately before each solve, and on
+failure request a *new* pair rather than retrying the old one:
+
+```js
+const { gt, challenge } = await (await fetch(REGISTER_URL)).json();
+const result = await solver.geetest(gt, challenge, PAGE_URL);
+```
+
+If the site loads GeeTest from a non-default API server domain, pass it through as well:
+
+```js
+await solver.geetest(gt, challenge, url, { api_server: 'api-na.geetest.com' });
+```
+
+---
+
+## GeeTest result — where are challenge/validate/seccode?
+
+`result.code` holds the raw JSON string CapSkip returns. The SDK also parses it
+for you, so prefer the individual fields:
+
+```js
+result.challenge;   // geetest_challenge
+result.validate;    // geetest_validate
+result.seccode;     // geetest_seccode
+```
+
+Submit all three under their `geetest_`-prefixed names, exactly as the site's own
+front-end does. Sending only `validate` is the most common reason a correct solve
+is rejected.
+
+---
+
 ## NetworkException during manual polling
 
 **Symptom:** `getResult()` keeps rejecting with `NetworkException`.

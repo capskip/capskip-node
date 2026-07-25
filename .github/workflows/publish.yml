@@ -13,7 +13,7 @@ jobs:
     name: Build and publish to npm
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # required to create the GitHub release
       id-token: write # required for npm Trusted Publishing (OIDC) + provenance
     steps:
       - name: Checkout
@@ -36,3 +36,12 @@ jobs:
         # Publishes via npm Trusted Publishing (OIDC) using the id-token permission
         # above — no NPM_TOKEN secret required. Build provenance is emitted too.
         run: npm publish --provenance --access public
+
+      # Without this the tag ships to npm but never appears on the repo's
+      # Releases page. Notes are auto-generated from merged PRs and can be
+      # edited afterwards.
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CapSkip Node.js SDK ${{ github.ref_name }}
+          generate_release_notes: true

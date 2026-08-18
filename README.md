@@ -45,7 +45,7 @@ Point the SDK at the [live captcha demo pages](https://capskip.com/captcha-demo/
 
 ### 1. Install the CapSkip captcha solver
 
-Download and run the CapSkip desktop app from [capskip.com](https://capskip.com/download/). Leave it running in the background.
+Download and run the CapSkip desktop app — [CapSkipInstaller.msi](https://capskip.com/download/CapSkipInstaller.msi). Leave it running in the background.
 
 In CapSkip settings, note:
 
@@ -397,7 +397,7 @@ The test suite uses Node's built-in test runner — no extra dependencies. See [
 
 ## Links
 
-- [CapSkip — local captcha solver](https://capskip.com) · [download](https://capskip.com/download/)
+- [CapSkip — local captcha solver](https://capskip.com) · [download the app](https://capskip.com/download/CapSkipInstaller.msi)
 - [Captcha demo pages](https://capskip.com/captcha-demo/) — live reCAPTCHA, Turnstile, GeeTest and image widgets
 - [Node.js captcha solver guide](https://capskip.com/nodejs-captcha-solver/)
 - [HTTP API docs](https://capskip.com/api-docs/)

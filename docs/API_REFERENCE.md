@@ -23,8 +23,10 @@ method returns a `Promise`.
 | reCAPTCHA v3 | `recaptcha(sitekey, url, { version: 'v3' })` | `userrecaptcha` + `version=v3` |
 | Cloudflare Turnstile | `turnstile()` | `turnstile` |
 | GeeTest v3 (slide) | `geetest()` | `geetest` |
+| ALTCHA (proof-of-work) | `altcha()` | `altcha` |
 
-**Proxy** is supported for reCAPTCHA, Turnstile, and GeeTest — not for image captcha.
+**Proxy** is supported for reCAPTCHA, Turnstile, GeeTest, and ALTCHA — not for image
+captcha. For ALTCHA the proxy is used only for the `challengeUrl` fetch.
 
 ---
 
@@ -267,6 +269,109 @@ rather than `defaultTimeout`.
 
 ---
 
+## 6. ALTCHA — `altcha(url, { ... })`
+
+ALTCHA is not a recognition captcha. There is no image, audio or text to read:
+the site issues a proof-of-work challenge and the client must brute-force a
+number that satisfies it. A solve is therefore deterministic and cheap —
+typically milliseconds.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `altcha` |
+| `pageurl` | string | Yes | Full URL of the page the challenge came from |
+| `challenge_url` | string | One of the two | Endpoint CapSkip fetches the challenge from |
+| `challenge_json` | string | One of the two | The challenge document itself, as a JSON string |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address — used **only** for the `challenge_url` fetch |
+| `proxytype` | string | No | Proxy type |
+
+Sending both challenge parameters is allowed: the inline `challengeJson` wins,
+because fetching would only re-obtain what you already supplied.
+
+### Getting the challenge
+
+Open DevTools → Network on the target page and look for the request the
+`<altcha-widget>` makes for its challenge (often something like
+`/altcha/challenge`). The request URL is your `challengeUrl`; its JSON response
+is your `challengeJson`.
+
+The widget attribute that names that endpoint depends on the widget version, so
+read the page source rather than assuming:
+
+| Widget | Attribute |
+|---|---|
+| v1 / v2 | `challengeurl="…"`, with a separate `challengejson="…"` for an inline challenge |
+| v3+ | `challenge="…"` — the same attribute takes either a URL or the challenge data |
+
+> **Challenges expire, and the window is short** — some sites inside two minutes.
+> Once expired, the site refuses the solution with a bare "verification failed"
+> that looks exactly like a wrong answer. Fetch the challenge immediately before
+> solving and submit the token promptly; do not fetch a batch in advance, and do
+> not hold a token while a user fills in a form.
+>
+> CapSkip refuses an already-expired inline challenge immediately rather than
+> burning CPU on a token that cannot work. If you passed `challengeUrl` and the
+> challenge expired while the job queued, it fetches a fresh one automatically.
+
+### SDK usage
+
+```js
+// CapSkip fetches the challenge for you
+const result = await solver.altcha('https://example.com/signup', {
+  challengeUrl: 'https://example.com/captcha/api/altcha/challenge',
+});
+
+// …or hand it the document you already have. No network request at all.
+const inline = await solver.altcha('https://example.com/signup', {
+  challengeJson: {
+    algorithm: 'SHA-256', challenge: '…', salt: '…',
+    signature: '…', maxnumber: 1000000,
+  },
+});
+
+result.token;    // the base64 payload to post back
+result.number;   // the counter that solved it
+result.code;     // the same string as token
+```
+
+`challengeJson` accepts an object (serialized for you) or a JSON string.
+
+Post the token back in the form field the widget uses, named `altcha`:
+
+```js
+await fetch(SIGNUP_URL, {
+  method: 'POST',
+  body: new URLSearchParams({
+    email: 'someone@example.com',
+    altcha: result.token,
+  }),
+});
+```
+
+Do not re-encode, trim or re-order the token: it is base64 of a JSON document
+whose fields are covered by the server's HMAC signature, so any modification
+invalidates it. Some integrations read the payload from a JSON body field
+instead — check what the page's own submit sends and mirror it.
+
+Unlike GeeTest and reCAPTCHA this is CPU proof-of-work rather than a browser
+solve, so it uses `defaultTimeout`, not `recaptchaTimeout`.
+
+### Algorithms
+
+CapSkip supports the legacy scheme (SHA-1/256/384/512) and PoW v2 with PBKDF2 or
+SHA. **Argon2id and scrypt are refused**, not attempted: a task using one returns
+`ERROR_CAPTCHA_UNSOLVABLE` and is never retried. ALTCHA itself recommends PBKDF2
+as the default, so this affects a minority of sites.
+
+All three widget types (`native`, `checkbox`, `switch`) work — the distinction is
+purely visual and never reaches CapSkip.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -276,6 +381,18 @@ Every solve method resolves to:
   captchaId: '12345',
   code: 'TOKEN_OR_TEXT',
   userAgent: '...',   // Turnstile only, when json=1 poll includes it
+}
+```
+
+ALTCHA additionally exposes `token` (the same string as `code`, named for the
+form field it goes in) and `number`, the counter that solved it:
+
+```js
+{
+  captchaId: '12345',
+  code: 'eyJhbGdvcml0aG0iOiJTSEEtMjU2Iiwi…',
+  token: 'eyJhbGdvcml0aG0iOiJTSEEtMjU2Iiwi…',
+  number: 9661,
 }
 ```
 
@@ -307,6 +424,8 @@ Convenience aliases mapped before sending to CapSkip:
 | `data_s` | `data-s` |
 | `apiServer` | `api_server` |
 | `api_subdomain` | `api_server` |
+| `challengeUrl` / `challengeURL` | `challenge_url` |
+| `challengeJson` / `challengeJSON` | `challenge_json` |
 | `proxy` object | `proxy` + `proxytype` strings |
 
 ```js

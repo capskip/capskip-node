@@ -26,6 +26,11 @@ const GEETEST_SUBMIT = new Set([
   'proxy', 'proxytype',
 ]);
 
+const ALTCHA_SUBMIT = new Set([
+  'method', 'pageurl', 'challenge_url', 'challenge_json', 'json',
+  'proxy', 'proxytype',
+]);
+
 // The only values CapSkip maps to a proxy scheme; it answers
 // ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
 // case-insensitively, as the server does.
@@ -39,6 +44,10 @@ const PARAM_ALIASES = {
   data_s: 'data-s',
   apiServer: 'api_server',
   api_subdomain: 'api_server',
+  challengeUrl: 'challenge_url',
+  challengeURL: 'challenge_url',
+  challengeJson: 'challenge_json',
+  challengeJSON: 'challenge_json',
 };
 
 function has(obj, key) {
@@ -176,6 +185,54 @@ function validateGeetestSubmit(params) {
   }
 }
 
+/**
+ * Drop unset challenge params and serialize an inline challenge document.
+ *
+ * `altcha(url, { challengeUrl, challengeJson })` is normally called with one of
+ * the two left out, and the form body can only carry a string -- so a document
+ * passed as an object is serialized rather than stringified into
+ * "[object Object]". Mirrors the server, which reads a JSON-body `null` as
+ * "not sent".
+ */
+function normalizeAltchaSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      out[key] = value;
+    }
+  }
+
+  const challenge = out.challenge_json;
+  if (typeof challenge === 'object') {
+    out.challenge_json = JSON.stringify(challenge);
+  }
+
+  return out;
+}
+
+function validateAltchaSubmit(params) {
+  if (!params.pageurl) {
+    throw new ValidationException("'pageurl' is required for ALTCHA.");
+  }
+
+  // CapSkip answers ERROR_BAD_PARAMETERS when neither is sent. Sending both is
+  // deliberately allowed -- the inline document simply wins, because fetching
+  // would only re-obtain what the caller already supplied.
+  if (!params.challenge_url && !params.challenge_json) {
+    throw new ValidationException(
+      "ALTCHA needs a challenge: pass 'challenge_url' for CapSkip to fetch it, "
+      + "or 'challenge_json' with the challenge document itself.",
+    );
+  }
+
+  const unknown = unknownKeys(params, ALTCHA_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for ALTCHA: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -201,6 +258,9 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
     validateTurnstileSubmit(prepared);
   } else if (captchaType === 'geetest') {
     validateGeetestSubmit(prepared);
+  } else if (captchaType === 'altcha') {
+    prepared = normalizeAltchaSubmit(prepared);
+    validateAltchaSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -217,6 +277,7 @@ module.exports = {
   RECAPTCHA_V3_SUBMIT,
   TURNSTILE_SUBMIT,
   GEETEST_SUBMIT,
+  ALTCHA_SUBMIT,
   PROXY_TYPES,
   PARAM_ALIASES,
   applyParamAliases,
@@ -225,6 +286,8 @@ module.exports = {
   validateRecaptchaSubmit,
   validateTurnstileSubmit,
   validateGeetestSubmit,
+  normalizeAltchaSubmit,
+  validateAltchaSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

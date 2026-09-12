@@ -126,6 +126,46 @@ function applyGeetestSolution(result) {
   return result;
 }
 
+// ALTCHA answers come back as a base64 payload: the challenge document with the
+// winning counter added. That payload is what the site's own `altcha` form field
+// carries, so it is posted back verbatim.
+
+/**
+ * Expose the answer as `token`, and the winning counter as `number`.
+ *
+ * `code` keeps the raw answer so callers that forward it verbatim (or that were
+ * written against another solver's API) keep working; `token` is the same string,
+ * named for the form field it goes into. If the payload does not decode, the
+ * result is returned untouched rather than masking the server's reply.
+ */
+function applyAltchaSolution(result) {
+  const code = result.code || '';
+  result.token = code;
+
+  let payload;
+  try {
+    const decoded = Buffer.from(code, 'base64');
+    // Buffer.from is lenient: it drops invalid characters instead of throwing,
+    // so round-trip to confirm the input really was base64 before trusting it.
+    if (decoded.toString('base64').replace(/=+$/, '') !== code.replace(/=+$/, '')) {
+      return result;
+    }
+    payload = JSON.parse(decoded.toString('utf8'));
+  } catch (err) {
+    return result;
+  }
+
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return result;
+  }
+
+  if (payload.number !== undefined) {
+    result.number = payload.number;
+  }
+
+  return result;
+}
+
 // CapSkip's in.php returns OK|<id> by default, or {"status":1,"request":"<id>"}
 // when the submit carried json=1. Accept both so submitting with json=1 works.
 function parseSubmitResponse(response) {
@@ -149,7 +189,7 @@ function parseSubmitResponse(response) {
   throw new ApiException(`cannot recognize response ${response}`);
 }
 
-/** Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile, GeeTest v3). */
+/** Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile, GeeTest v3, ALTCHA). */
 class CapSkip {
   constructor({
     apiKey = 'capskip',
@@ -228,6 +268,44 @@ class CapSkip {
       poll_json: 1,
     });
     return applyGeetestSolution(result);
+  }
+
+  /**
+   * Solve an ALTCHA proof-of-work challenge.
+   *
+   * Pass `challengeUrl` for CapSkip to fetch the challenge itself, or
+   * `challengeJson` with the document you already have (a JSON string, or an
+   * object which is serialized for you). Sending both is allowed -- the inline
+   * document wins. A proxy applies only to the `challengeUrl` fetch.
+   *
+   * Challenges expire fast -- some sites inside two minutes -- and an expired one
+   * is refused with a bare "verification failed" that looks exactly like a wrong
+   * answer. Fetch the challenge immediately before calling, and post the token
+   * promptly.
+   *
+   * The result carries the raw answer as `code`, the same string as `token`
+   * (what the site's `altcha` form field expects, verbatim), and the counter
+   * that solved it as `number`.
+   */
+  async altcha(url, options = {}) {
+    // An unset challenge param is dropped rather than sent as undefined, so
+    // `altcha(url, { challengeUrl, challengeJson })` works with either left out.
+    const given = {};
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    }
+
+    // Unlike GeeTest and reCAPTCHA this is CPU proof-of-work measured in
+    // milliseconds, not a browser solve, so it keeps the default timeout.
+    const result = await this.solve({
+      url,
+      ...given,
+      method: 'altcha',
+      poll_json: 1,
+    });
+    return applyAltchaSolution(result);
   }
 
   async solve(options = {}) {
@@ -318,6 +396,9 @@ class CapSkip {
     if (method === 'geetest') {
       return prepareSubmitParams(params, 'geetest');
     }
+    if (method === 'altcha') {
+      return prepareSubmitParams(params, 'altcha');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -330,4 +411,5 @@ module.exports = {
   parseSubmitResponse,
   applyPollResult,
   applyGeetestSolution,
+  applyAltchaSolution,
 };

@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `challengeJson`/`challengeJSON` for `challenge_json`.
 - `AltchaOptions` and the `token`/`number` result fields in the TypeScript
   definitions.
+- Both ALTCHA generations are handled: the legacy scheme (SHA-1/256/384/512) and
+  proof-of-work v2 (PBKDF2 or SHA). Their tokens are shaped differently — a v2
+  payload carries no top-level `number`, its counter sitting at
+  `solution.counter` — so the counter is taken from the server's own `solution`
+  object, the one field both report the same way, and dug out of the token only
+  when a poll did not carry it.
 
 ### Notes
 

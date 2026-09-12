@@ -17,12 +17,52 @@ const CHALLENGE_DOC = {
 };
 const CHALLENGE_JSON = JSON.stringify(CHALLENGE_DOC);
 
-// What CapSkip hands back: base64 of the solved challenge document, with the
-// winning counter in `number`.
+// What CapSkip hands back for a *legacy* challenge: base64 of the solved
+// challenge document, with the winning counter in `number`.
 const NUMBER = 9661;
 const TOKEN = Buffer.from(
   JSON.stringify({ ...CHALLENGE_DOC, number: NUMBER }),
 ).toString('base64');
+
+// A PoW v2 answer is shaped completely differently: no top-level `number`, and
+// the counter sits at `solution.counter`. Captured from a real PBKDF2/SHA-256
+// deployment (captcha.seventy9.co.uk), the scheme altcha.org documents today.
+const V2_NUMBER = 47;
+const V2_TOKEN = Buffer.from(JSON.stringify({
+  challenge: {
+    parameters: {
+      algorithm: 'PBKDF2/SHA-256',
+      cost: 50000,
+      expiresAt: 1789224090,
+      keyLength: 32,
+      keyPrefix: '00',
+      nonce: '634c4f591fd086beb40d67312b85808a',
+      salt: '511e1c75edbf295278c9bfb68191053c',
+    },
+    signature: '9197e4a35ebff399d669e747c7c5e6ab079b30fe3437df268dc7caf34cf9e281',
+  },
+  solution: {
+    counter: V2_NUMBER,
+    derivedKey: '0099db7cb36864d8875ff8305c9a3d2649b1f72cb774de1c',
+  },
+})).toString('base64');
+
+/** A client whose poll returns exactly `payload`, for the v2 shapes. */
+function makeRawSolver(payload) {
+  const solver = new CapSkip({ apiKey: 'API_KEY', pollingInterval: 1 });
+  solver.apiClient = {
+    async in_(options = {}) {
+      const { files = {}, ...fields } = options;
+      this.incomings = fields;
+      this.incomingFiles = files;
+      return 'OK|123';
+    },
+    async res() {
+      return JSON.stringify(payload);
+    },
+  };
+  return solver;
+}
 
 // Mock client returning a realistic ALTCHA answer (base64 token in `request`).
 class AltchaApiClient {
@@ -152,13 +192,63 @@ test('altcha exposes token and number', async () => {
   assert.strictEqual(result.number, NUMBER);
 });
 
+test('altcha exposes the counter for a proof-of-work v2 answer', async () => {
+  // A v2 token carries no top-level `number` — the counter is at
+  // `solution.counter`, and the server reports it as `solution.number` in the
+  // poll payload. Reading only the token's own `number` silently drops it for
+  // every PBKDF2 site, which is the scheme ALTCHA recommends.
+  const solver = makeRawSolver({
+    status: 1,
+    request: V2_TOKEN,
+    solution: { token: V2_TOKEN, number: V2_NUMBER },
+  });
+
+  const result = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
+
+  assert.strictEqual(result.token, V2_TOKEN);
+  assert.strictEqual(result.number, V2_NUMBER);
+});
+
+test('altcha recovers a v2 counter from the token when the poll carries no solution', async () => {
+  const solver = makeRawSolver({ status: 1, request: V2_TOKEN });
+
+  const result = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
+
+  assert.strictEqual(result.number, V2_NUMBER);
+});
+
+test('altcha does not leak the poll solution object into the result', async () => {
+  // Its two fields are already exposed as `token` and `number`.
+  const solver = makeSolver();
+
+  const result = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
+
+  assert.strictEqual(result.solution, undefined);
+});
+
 test('altcha leaves an undecodable answer alone', async () => {
-  const solver = makeSolver('not-base64-json');
+  // No `solution` object either — a server returning something that is not a
+  // token has no counter to report, so there is nothing to fall back on.
+  const solver = makeRawSolver({ status: 1, request: 'not-base64-json' });
 
   const result = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
 
   assert.strictEqual(result.code, 'not-base64-json');
   assert.strictEqual(result.number, undefined);
+});
+
+test('altcha trusts the server counter over an unreadable token', async () => {
+  // If the two ever disagree, the server worked the answer out and the decode
+  // is only an inference from it.
+  const solver = makeRawSolver({
+    status: 1,
+    request: 'not-base64-json',
+    solution: { token: 'not-base64-json', number: 512 },
+  });
+
+  const result = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
+
+  assert.strictEqual(result.number, 512);
 });
 
 test('altcha uses the default timeout, not the reCAPTCHA one', async () => {

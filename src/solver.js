@@ -83,6 +83,13 @@ function applyPollResult(result, polled) {
     if (userAgent) {
       result.userAgent = userAgent;
     }
+    // ALTCHA's createTask-shaped `solution` object. Carried through so
+    // applyAltchaSolution can read the counter the server already worked out,
+    // which is the only reliable source for a proof-of-work v2 answer; that
+    // function deletes it, so it never reaches the caller.
+    if (polled.solution !== null && typeof polled.solution === 'object') {
+      result.solution = polled.solution;
+    }
   } else {
     result.code = polled;
   }
@@ -138,29 +145,73 @@ function applyGeetestSolution(result) {
  * named for the form field it goes into. If the payload does not decode, the
  * result is returned untouched rather than masking the server's reply.
  */
-function applyAltchaSolution(result) {
-  const code = result.code || '';
-  result.token = code;
-
+/**
+ * Dig the winning counter out of a token, whichever scheme produced it.
+ *
+ * The two ALTCHA generations nest it differently: a legacy payload is the
+ * challenge document with a top-level `number` added, while a proof-of-work v2
+ * payload is `{ challenge: {...}, solution: { counter: N, ... } }` and has no
+ * `number` at all. Returns undefined if the payload does not decode.
+ */
+function tokenCounter(code) {
   let payload;
   try {
     const decoded = Buffer.from(code, 'base64');
     // Buffer.from is lenient: it drops invalid characters instead of throwing,
     // so round-trip to confirm the input really was base64 before trusting it.
     if (decoded.toString('base64').replace(/=+$/, '') !== code.replace(/=+$/, '')) {
-      return result;
+      return undefined;
     }
     payload = JSON.parse(decoded.toString('utf8'));
   } catch (err) {
-    return result;
+    return undefined;
   }
 
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-    return result;
+    return undefined;
   }
 
   if (payload.number !== undefined) {
-    result.number = payload.number;
+    return payload.number;
+  }
+
+  if (payload.solution !== null && typeof payload.solution === 'object') {
+    return payload.solution.counter;
+  }
+
+  return undefined;
+}
+
+/**
+ * Expose the answer as `token`, and the winning counter as `number`.
+ *
+ * `code` keeps the raw answer so callers that forward it verbatim (or that were
+ * written against another solver's API) keep working; `token` is the same
+ * string, named for the form field it goes into.
+ *
+ * The counter comes from the server's own `solution` object when the poll
+ * carried one, because that is the single field both ALTCHA generations report
+ * the same way. Only if it is absent — a plain-text poll — is it dug out of the
+ * token, which is shaped differently per scheme. If neither yields one, the
+ * result keeps its token and simply has no `number`, rather than masking the
+ * server's reply.
+ */
+function applyAltchaSolution(result) {
+  const code = result.code || '';
+  result.token = code;
+
+  const { solution } = result;
+  delete result.solution;
+
+  let number = solution !== null && typeof solution === 'object'
+    ? solution.number
+    : undefined;
+  if (number === undefined) {
+    number = tokenCounter(code);
+  }
+
+  if (number !== undefined) {
+    result.number = number;
   }
 
   return result;

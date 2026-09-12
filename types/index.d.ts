@@ -31,7 +31,8 @@ export interface SolveResult {
   /**
    * The solution: recognized text for images, a token otherwise. For GeeTest
    * this is the raw JSON string CapSkip returns — prefer the parsed
-   * `challenge` / `validate` / `seccode` fields below.
+   * `challenge` / `validate` / `seccode` fields below. For ALTCHA it is the
+   * base64 token, also exposed as `token`.
    */
   code: string;
   /** Turnstile only — the User-Agent to use when submitting the token. */
@@ -42,6 +43,13 @@ export interface SolveResult {
   validate?: string;
   /** GeeTest only — the `geetest_seccode` value to post back. */
   seccode?: string;
+  /**
+   * ALTCHA only — the base64 payload to post back in the site's `altcha` form
+   * field. The same string as `code`, named for where it goes.
+   */
+  token?: string;
+  /** ALTCHA only — the counter that solved the challenge. */
+  number?: number;
 }
 
 /** Extra options for {@link CapSkip.normal}. */
@@ -111,6 +119,28 @@ export interface GeetestOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.altcha}. */
+export interface AltchaOptions {
+  /** Endpoint CapSkip fetches the challenge from. */
+  challengeUrl?: string;
+  /** Endpoint CapSkip fetches the challenge from. */
+  challenge_url?: string;
+  /**
+   * The challenge document itself. An object is serialized for you; a string is
+   * sent as-is.
+   */
+  challengeJson?: string | Record<string, unknown>;
+  /** The challenge document itself. */
+  challenge_json?: string | Record<string, unknown>;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy — used only for the `challengeUrl` fetch, never for the solve. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -150,6 +180,14 @@ export class CapSkip {
     url: string,
     options?: GeetestOptions,
   ): Promise<SolveResult>;
+  /**
+   * Solve an ALTCHA proof-of-work challenge.
+   *
+   * Pass `challengeUrl` for CapSkip to fetch the challenge, or `challengeJson`
+   * with the document itself. Sending both is allowed — the inline document
+   * wins. Challenges expire fast, so fetch one immediately before calling.
+   */
+  altcha(url: string, options?: AltchaOptions): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;
   /** Submit a captcha without polling; resolves to the captcha id. */

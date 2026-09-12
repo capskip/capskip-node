@@ -9,6 +9,19 @@ const { URL } = require('url');
 const CODE = 'SOLVED_TOKEN_abc123';
 const USER_AGENT = 'CapSkipUA/1.0';
 
+// ALTCHA answers are base64 of the challenge document with the winning counter
+// added, so the mock has to return a real one for the token/number parsing to
+// mean anything.
+const ALTCHA_NUMBER = 9661;
+const ALTCHA_TOKEN = Buffer.from(JSON.stringify({
+  algorithm: 'SHA-256',
+  challenge: '3dd28253be6cc0c54d95f7f98c517e68',
+  number: ALTCHA_NUMBER,
+  salt: '46d5b1c8871e5152d902ee3f?expires=1893456000',
+  signature: '4b1cf0e0be0f4e5247e50b0f9a449830',
+  took: 16.58,
+})).toString('base64');
+
 // A minimal valid 1x1 PNG. The mock returns these bytes for /image.png and the
 // SDK never inspects the content, so exact pixels do not matter.
 const PNG = Buffer.from(
@@ -49,6 +62,18 @@ function createMockServer() {
         wantJson ? '{"status":0,"request":"CAPCHA_NOT_READY"}' : 'CAPCHA_NOT_READY',
         wantJson ? 'application/json' : 'text/plain',
       );
+    } else if (idType[cid] === 'altcha') {
+      // CapSkip emits a superset: the legacy status/request pair plus the
+      // createTask-shaped solution object.
+      if (wantJson) {
+        send(res, JSON.stringify({
+          status: 1,
+          request: ALTCHA_TOKEN,
+          solution: { token: ALTCHA_TOKEN, number: ALTCHA_NUMBER },
+        }), 'application/json');
+      } else {
+        send(res, `OK|${ALTCHA_TOKEN}`);
+      }
     } else if (wantJson && idType[cid] === 'turnstile') {
       send(res, `{"status":1,"request":"${CODE}","useragent":"${USER_AGENT}"}`, 'application/json');
     } else if (wantJson) {
@@ -134,6 +159,8 @@ function startMockServer() {
 module.exports = {
   CODE,
   USER_AGENT,
+  ALTCHA_TOKEN,
+  ALTCHA_NUMBER,
   PNG,
   createMockServer,
   startMockServer,

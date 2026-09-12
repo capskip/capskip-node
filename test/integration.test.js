@@ -14,7 +14,9 @@ const {
   CapSkip, ApiClient,
   ApiException, NetworkException, TimeoutException,
 } = require('../src');
-const { startMockServer, CODE, USER_AGENT, PNG } = require('./helpers/mockServer');
+const {
+  startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
+} = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
 const TS_SITEKEY = '0x4AAAAAAABUYP0XeMJF0xoy';
@@ -179,4 +181,30 @@ test('concurrent solves', async () => {
     solver.turnstile(TS_SITEKEY, URL),
   ]);
   assert.ok(results.every((r) => r.code === CODE));
+});
+
+const CHALLENGE_URL = 'https://example.com/captcha/api/altcha/challenge';
+const CHALLENGE_DOC = {
+  algorithm: 'SHA-256',
+  challenge: '3dd28253be6cc0c54d95f7f98c517e68',
+  salt: '46d5b1c8871e5152d902ee3f?expires=1893456000',
+  signature: '4b1cf0e0be0f4e5247e50b0f9a449830',
+  maxnumber: 1000000,
+};
+
+test('altcha over HTTP with a challenge url', async () => {
+  const solver = makeSolver();
+  const r = await solver.altcha(URL, { challengeUrl: CHALLENGE_URL });
+  assert.strictEqual(r.code, ALTCHA_TOKEN);
+  assert.strictEqual(r.token, ALTCHA_TOKEN);
+  assert.strictEqual(r.number, ALTCHA_NUMBER);
+  assert.ok(r.captchaId);
+});
+
+test('altcha over HTTP with an inline challenge object', async () => {
+  // An object has to reach the server as JSON, not as "[object Object]", or the
+  // server answers ERROR_BAD_PARAMETERS.
+  const solver = makeSolver();
+  const r = await solver.altcha(URL, { challengeJson: CHALLENGE_DOC });
+  assert.strictEqual(r.number, ALTCHA_NUMBER);
 });

@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-12
+
+### Added
+
+- **ALTCHA support** via `altcha(url, options)`. Pass `challengeUrl` for CapSkip
+  to fetch the challenge, or `challengeJson` with the document itself (a JSON
+  string, or an object which is serialized for you). Sending both is allowed —
+  the inline document wins. The result exposes `token` (the value the site's
+  `altcha` form field expects) and `number`, the counter that solved it; `code`
+  keeps the same raw string.
+- Parameter aliases `challengeUrl`/`challengeURL` for `challenge_url` and
+  `challengeJson`/`challengeJSON` for `challenge_json`.
+- `AltchaOptions` and the `token`/`number` result fields in the TypeScript
+  definitions.
+- Both ALTCHA generations are handled: the legacy scheme (SHA-1/256/384/512) and
+  proof-of-work v2 (PBKDF2 or SHA). Their tokens are shaped differently — a v2
+  payload carries no top-level `number`, its counter sitting at
+  `solution.counter` — so the counter is taken from the server's own `solution`
+  object, the one field both report the same way, and dug out of the token only
+  when a poll did not carry it.
+
+### Notes
+
+- ALTCHA is CPU proof-of-work rather than a browser solve, so it uses
+  `defaultTimeout` instead of the longer `recaptchaTimeout` that reCAPTCHA,
+  Turnstile and GeeTest use.
+- A proxy passed to `altcha()` applies only to the `challengeUrl` fetch; a task
+  carrying its challenge inline never touches the network.
+
 ## [1.1.0] - 2026-07-26
 
 ### Added

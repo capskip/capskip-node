@@ -16,6 +16,7 @@ const {
 } = require('../src');
 const {
   startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
+  CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -207,4 +208,83 @@ test('altcha over HTTP with an inline challenge object', async () => {
   const solver = makeSolver();
   const r = await solver.altcha(URL, { challengeJson: CHALLENGE_DOC });
   assert.strictEqual(r.number, ALTCHA_NUMBER);
+});
+
+// -- Capy -------------------------------------------------------------------
+
+const CAPY_KEY = 'PUZZLE_Abc1dEFghIJKLM2no34P56q7rStu8v';
+const FOX_SITEKEY = 'sk_xtNxpk6fCdFbxh1_xJeGflSdCE9tn99G';
+const FRIENDLY_SITEKEY = 'FCMGEMUD2M567T8G';
+
+test('capy over HTTP', async () => {
+  const solver = makeSolver();
+  const r = await solver.capy(CAPY_KEY, URL);
+  assert.strictEqual(r.captchakey, CAPY_SOLUTION.captchakey);
+  assert.strictEqual(r.challengekey, CAPY_SOLUTION.challengekey);
+  assert.strictEqual(r.answer, CAPY_SOLUTION.answer);
+  assert.ok(r.captchaId);
+});
+
+test('capy answer crosses the wire unchanged', async () => {
+  // The answer is the drag path the widget would have recorded; the target site
+  // verifies it against the challenge it issued, so any edit breaks it.
+  const solver = makeSolver();
+  const r = await solver.capy(CAPY_KEY, URL, { api_server: 'https://jp.api.capy.me/' });
+  assert.strictEqual(r.answer, CAPY_SOLUTION.answer);
+});
+
+test('capy refuses the avatar version locally', async () => {
+  const solver = makeSolver();
+  await assert.rejects(() => solver.capy(CAPY_KEY, URL, { version: 'avatar' }));
+});
+
+// -- CaptchaFox --------------------------------------------------------------
+
+test('captchafox over HTTP', async () => {
+  const solver = makeSolver();
+  const r = await solver.captchafox(FOX_SITEKEY, URL);
+  assert.strictEqual(r.code, CAPTCHAFOX_TOKEN);
+  assert.strictEqual(r.token, CAPTCHAFOX_TOKEN);
+  assert.ok(r.captchaId);
+});
+
+test('captchafox reports the browser user agent', async () => {
+  // Not the one sent: CapSkip solves in its own browser, and the token has to
+  // be submitted under the UA that minted it.
+  const solver = makeSolver();
+  const callerUa = 'Mozilla/5.0 (the caller own UA)';
+  const r = await solver.captchafox(FOX_SITEKEY, URL, { useragent: callerUa });
+  assert.strictEqual(r.userAgent, CAPTCHAFOX_USER_AGENT);
+  assert.notStrictEqual(r.userAgent, callerUa);
+});
+
+test('captchafox without a sitekey is refused locally', async () => {
+  const solver = makeSolver();
+  await assert.rejects(() => solver.captchafox('', URL));
+});
+
+// -- Friendly Captcha --------------------------------------------------------
+
+test('friendlyCaptcha over HTTP', async () => {
+  const solver = makeSolver();
+  const r = await solver.friendlyCaptcha(FRIENDLY_SITEKEY, URL, { version: 'v1' });
+  assert.strictEqual(r.code, FRIENDLY_CAPTCHA_TOKEN);
+  assert.strictEqual(r.token, FRIENDLY_CAPTCHA_TOKEN);
+  assert.ok(r.captchaId);
+});
+
+test('friendlyCaptcha token survives the wire verbatim', async () => {
+  // The token carries base64 padding and slashes; form encoding must round-trip
+  // them, or the target site rejects a token that looks fine.
+  const solver = makeSolver();
+  const r = await solver.friendlyCaptcha(FRIENDLY_SITEKEY, URL, {
+    moduleScript: 'https://cdn.example.com/site.min.js',
+  });
+  assert.strictEqual(r.token, FRIENDLY_CAPTCHA_TOKEN);
+  assert.ok(r.token.includes('/') && r.token.includes('='));
+});
+
+test('friendlyCaptcha with a bad version is refused locally', async () => {
+  const solver = makeSolver();
+  await assert.rejects(() => solver.friendlyCaptcha(FRIENDLY_SITEKEY, URL, { version: 'v3' }));
 });

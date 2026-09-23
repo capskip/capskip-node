@@ -1,6 +1,6 @@
 {
   "name": "capskip",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Captcha solver for Node.js: solve reCAPTCHA v2/v3, Cloudflare Turnstile, GeeTest and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees.",
   "main": "src/index.js",
   "types": "types/index.d.ts",

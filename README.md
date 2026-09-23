@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-node/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-node/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA and image captchas from Node.js.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha and image captchas from Node.js.**
 
 Official Node.js client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve. TypeScript definitions included.
 
@@ -19,7 +19,7 @@ npm install capskip
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -35,6 +35,9 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | Cloudflare Turnstile (challenge page) | `solver.turnstile(sitekey, url, { data, pagedata })` |
 | **GeeTest v3 solver** (slide puzzle) | `solver.geetest(gt, challenge, url)` |
 | **ALTCHA solver** (proof-of-work) | `solver.altcha(url, { challengeUrl })` |
+| **Capy Puzzle solver** (slide puzzle) | `solver.capy(sitekey, url)` |
+| **CaptchaFox solver** (widget) | `solver.captchafox(sitekey, url)` |
+| **Friendly Captcha solver** (proof-of-work) | `solver.friendlyCaptcha(sitekey, url, { version })` |
 
 **hCaptcha and FunCaptcha/Arkose are not supported.** hCaptcha is the one people misidentify most often, since it also puts a `data-sitekey` on the widget — check for `class="h-captcha"` or a `js.hcaptcha.com` script before reaching for `recaptcha()`.
 
@@ -131,8 +134,9 @@ const solver = new CapSkip({
   host: '127.0.0.1',        // CapSkip host
   port: 8080,               // CapSkip port from app settings
   defaultTimeout: 120,      // seconds — image captcha polling timeout
-  recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest polling timeout
-                            // (ALTCHA uses defaultTimeout — CPU work, not a browser solve)
+  recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
+                            // Friendly Captcha polling timeout
+                            // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
   pollingInterval: 5,       // max seconds between res.php polls (starts at 0.25s, backs off to this)
 });
 ```
@@ -230,7 +234,86 @@ result.token;
 Challenges expire fast — some sites inside two minutes — so fetch one
 immediately before solving and submit the token promptly.
 
-### With a proxy (reCAPTCHA, Turnstile, GeeTest & ALTCHA only)
+### Capy Puzzle
+
+A Capy solution is not a token. It is three values that together go into the
+target form, so post all three back exactly as returned.
+
+```js
+const result = await solver.capy(
+  'PUZZLE_Abc1dEFghIJKLM2no34P56q7rStu8v',
+  'https://example.com/login',
+);
+
+// capy_captchakey, capy_challengekey and capy_answer respectively
+result.captchakey, result.challengekey, result.answer;
+```
+
+`answer` is the drag path the widget would have recorded — submit it verbatim,
+without trimming or re-encoding it. The challenge key is single-use and
+short-lived, so submit promptly rather than caching the three values.
+
+Pass `api_server` when the widget script points somewhere other than
+`https://jp.api.capy.me`. Only the `puzzle` family is solved; `version: 'avatar'`
+is refused rather than answered with a puzzle answer the site would reject.
+
+### CaptchaFox
+
+```js
+const result = await solver.captchafox(
+  'sk_xtNxpk6fCdFbxh1_xJeGflSdCE9tn99G',
+  'https://example.com/signup',
+);
+
+// Post this back in the form field the widget uses, named `cf-captcha-response`
+result.token;
+
+// The UA the token was minted under — submit under this one, not your own
+result.userAgent;
+```
+
+`url` has to be the page the widget actually runs on: CaptchaFox checks it
+against the domains the key is registered for and refuses a mismatch
+permanently, not intermittently.
+
+Pass `api_server` only when the page does not load the default widget. A page
+loading the MAM package expects a `MAM_` prefixed token, and sending the wrong
+source still succeeds — it just returns a token the site will not accept, which
+reads as a silent verification failure rather than an error.
+
+### Friendly Captcha
+
+Two different protocols ship under this name and a sitekey does not tell you
+which one a site uses, so say which — or send the widget script and let CapSkip
+read it off the build the site actually loads.
+
+```js
+const result = await solver.friendlyCaptcha(
+  'FCMGEMUD2M567T8G',
+  'https://example.com/signup',
+  { version: 'v2' },
+);
+
+// v1 → frc-captcha-solution, v2 → frc-captcha-response
+result.token;
+```
+
+```js
+// Or let the script URL decide the version
+const result = await solver.friendlyCaptcha(
+  'FCMGEMUD2M567T8G',
+  'https://example.com/signup',
+  { moduleScript: 'https://cdn.example.com/@friendlycaptcha/sdk@0.1.6/site.min.js' },
+);
+```
+
+Solving the wrong version returns a well-formed token the target site rejects,
+with nothing to indicate the version was the problem. With neither `version` nor
+a script URL, v1 is assumed. Pass `api_server: 'eu'` for a sitekey on the EU
+data-residency tenant. A v2 token is roughly six kilobytes, so size whatever
+carries it accordingly.
+
+### With a proxy (every method except image captcha)
 
 ```js
 // Proxy is not supported for image captcha
@@ -325,7 +408,10 @@ Every solve method resolves to:
 ```
 
 GeeTest additionally expands its answer into `challenge`, `validate`, and
-`seccode`, while `code` keeps the raw JSON string. ALTCHA adds `token` (the same
+`seccode`, while `code` keeps the raw JSON string. CaptchaFox and Friendly
+Captcha add `token`, the same string as `code`. Capy expands its answer into
+`captchakey`, `challengekey` and `answer` — it returns an object rather than a
+token, and `code` keeps the raw answer. ALTCHA adds `token` (the same
 string as `code`) and `number`, the counter that solved it.
 
 ---
@@ -371,7 +457,7 @@ const result: SolveResult = await solver.recaptcha('...', 'https://example.com')
 
 ### How do I solve a captcha in Node.js?
 
-Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token, or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token, or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -379,7 +465,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
 
 ### Does it work with Puppeteer and Playwright?
 

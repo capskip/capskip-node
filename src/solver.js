@@ -217,6 +217,75 @@ function applyAltchaSolution(result) {
   return result;
 }
 
+// A Capy solution is not a token. It is three values that together go into the
+// target form, under the capy_ prefixed names the widget would have filled in.
+const CAPY_FIELDS = ['captchakey', 'challengekey', 'answer', 'respKey'];
+
+/**
+ * Expand the Capy answer into `captchakey` / `challengekey` / `answer`.
+ *
+ * `code` keeps the raw answer -- an object when polled with json=1, where the
+ * server puts it straight into `request`, or the JSON string it sends after
+ * `OK|` in plain-text mode -- so callers that forward it verbatim (or that were
+ * written against another solver's API) keep working.
+ *
+ * If the answer does not parse, the result is returned untouched rather than
+ * masking the server's reply.
+ */
+function applyCapySolution(result) {
+  let payload = result.solution;
+  delete result.solution;
+
+  if (payload === null || typeof payload !== 'object') {
+    const { code } = result;
+    if (code !== null && typeof code === 'object') {
+      payload = code;
+    } else {
+      try {
+        payload = JSON.parse(code || '');
+      } catch (error) {
+        return result;
+      }
+    }
+  }
+
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return result;
+  }
+
+  for (const field of CAPY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(payload, field)) {
+      result[field] = payload[field];
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Expose a single-token answer as `token`, named for the form field it fills.
+ *
+ * `code` keeps the raw answer so callers that forward it verbatim keep working;
+ * `token` is the same string. The server's createTask-shaped `solution` object
+ * carries that same string, so it is consumed here rather than handed back as a
+ * second copy -- but it is read first when `request` came through empty, so a
+ * client is never left without the token the poll actually carried.
+ */
+function applyTokenSolution(result) {
+  const { solution } = result;
+  delete result.solution;
+
+  let code = result.code;
+
+  if (!code && solution !== null && typeof solution === 'object') {
+    code = solution.token || '';
+    result.code = code;
+  }
+
+  result.token = code || '';
+  return result;
+}
+
 // CapSkip's in.php returns OK|<id> by default, or {"status":1,"request":"<id>"}
 // when the submit carried json=1. Accept both so submitting with json=1 works.
 function parseSubmitResponse(response) {
@@ -359,6 +428,131 @@ class CapSkip {
     return applyAltchaSolution(result);
   }
 
+  /**
+   * Solve a Capy Puzzle captcha.
+   *
+   * `sitekey` is the site's public Capy key, conventionally prefixed `PUZZLE_`;
+   * it is sent as the `captchakey` the API documents. Pass `api_server` when the
+   * widget script points somewhere other than `https://jp.api.capy.me`.
+   *
+   * The result is not a token. It carries `captchakey`, `challengekey` and
+   * `answer`, which go into the target form's `capy_captchakey`,
+   * `capy_challengekey` and `capy_answer` fields, plus the raw answer as `code`.
+   * Submit `answer` verbatim -- it is the drag path the widget would have
+   * recorded, so trimming or re-encoding it invalidates the solve.
+   *
+   * The challenge key is single-use and short-lived, so submit promptly rather
+   * than caching the three values for a later request.
+   */
+  async capy(sitekey, url, options = {}) {
+    // An unset optional is dropped rather than sent as undefined, so
+    // `capy(key, url, { apiServer: undefined })` behaves as if it were omitted.
+    const given = {};
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    }
+
+    // A Capy solve is one HTTP fetch plus pixel math, not a browser session, so
+    // it keeps the default timeout. It is held back to roughly two seconds
+    // before the answer is released -- Capy refuses answers that arrive faster
+    // than a human could have produced them -- which the default absorbs.
+    const result = await this.solve({
+      captchakey: sitekey,
+      url,
+      ...given,
+      method: 'capy',
+      poll_json: 1,
+    });
+    return applyCapySolution(result);
+  }
+
+  /**
+   * Solve a CaptchaFox challenge.
+   *
+   * `sitekey` is the public key the widget renders with, conventionally prefixed
+   * `sk_`, and `url` has to be the page the widget actually runs on: CaptchaFox
+   * checks it against the domains the key is registered for and refuses a
+   * mismatch permanently rather than intermittently.
+   *
+   * Pass `api_server` only when the target page does not load the default
+   * widget. A page loading the MAM package expects a `MAM_` prefixed token, and
+   * sending the wrong source still succeeds -- it just returns a token in a
+   * format the site will not accept, which reads as a silent verification
+   * failure rather than an error.
+   *
+   * The result carries the token as both `code` and `token`, for the form's
+   * `cf-captcha-response` field, and `userAgent` when the solve reported one.
+   * That User-Agent is the browser's own, not any you sent, so submit the token
+   * under it.
+   */
+  async captchafox(sitekey, url, options = {}) {
+    const given = {};
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    }
+
+    // A real browser session, like reCAPTCHA and GeeTest, and longer again when
+    // an interactive challenge is drawn -- so it gets the longer of the two
+    // timeouts unless the caller asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      sitekey,
+      url,
+      ...given,
+      method: 'captchafox',
+      poll_json: 1,
+    });
+    return applyTokenSolution(result);
+  }
+
+  /**
+   * Solve a Friendly Captcha proof-of-work challenge.
+   *
+   * Two different protocols ship under this name and a sitekey does not tell you
+   * which one a site uses, so say which: pass `version: 'v1'` or `version: 'v2'`,
+   * or pass `moduleScript` with the src of the widget's `type="module"` script
+   * tag and let CapSkip read the version off the build the site actually loads.
+   * With neither, v1 is assumed. Solving the wrong version returns a well-formed
+   * token the target site rejects, with nothing to indicate the version was the
+   * problem.
+   *
+   * Pass `api_server: 'eu'` for a sitekey on the EU data-residency tenant; both
+   * tenants mint a token for the same sitekey, so the wrong one is only caught
+   * by the site's own verification.
+   *
+   * The result carries the token as both `code` and `token`. It goes into
+   * `frc-captcha-solution` on v1 and `frc-captcha-response` on v2 -- the field
+   * names differ, which is what catches an integration moved from one to the
+   * other. A v2 token is roughly six kilobytes, so size whatever carries it
+   * accordingly.
+   */
+  async friendlyCaptcha(sitekey, url, options = {}) {
+    const given = {};
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    }
+
+    // Proof-of-work, but not the millisecond kind ALTCHA does: the service sets
+    // the difficulty per request and raises it for addresses it has seen a lot
+    // of, and v2 always solves in a browser. Both make solve time variable
+    // enough to want the longer timeout.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      sitekey,
+      url,
+      ...given,
+      method: 'friendly_captcha',
+      poll_json: 1,
+    });
+    return applyTokenSolution(result);
+  }
+
   async solve(options = {}) {
     const {
       timeout = 0,
@@ -450,6 +644,15 @@ class CapSkip {
     if (method === 'altcha') {
       return prepareSubmitParams(params, 'altcha');
     }
+    if (method === 'capy') {
+      return prepareSubmitParams(params, 'capy');
+    }
+    if (method === 'captchafox') {
+      return prepareSubmitParams(params, 'captchafox');
+    }
+    if (method === 'friendly_captcha') {
+      return prepareSubmitParams(params, 'friendly_captcha');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -463,4 +666,6 @@ module.exports = {
   applyPollResult,
   applyGeetestSolution,
   applyAltchaSolution,
+  applyCapySolution,
+  applyTokenSolution,
 };

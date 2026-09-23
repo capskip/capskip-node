@@ -31,6 +31,30 @@ const ALTCHA_SUBMIT = new Set([
   'proxy', 'proxytype',
 ]);
 
+const CAPY_SUBMIT = new Set([
+  'method', 'captchakey', 'pageurl', 'api_server', 'version', 'useragent', 'json',
+  'proxy', 'proxytype',
+]);
+
+const CAPTCHAFOX_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'api_server', 'useragent', 'json',
+  'proxy', 'proxytype',
+]);
+
+const FRIENDLY_CAPTCHA_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'version', 'module_script', 'nomodule_script',
+  'api_server', 'useragent', 'json', 'proxy', 'proxytype',
+]);
+
+// CapSkip solves the puzzle family only. `avatar` is a different challenge
+// behind a different endpoint; the server refuses it at submit time rather than
+// answering it with a puzzle answer, which would bill for a solve the target
+// site rejects.
+const CAPY_VERSIONS = ['puzzle'];
+
+// Both spellings the server accepts, and the bare digits it also takes.
+const FRIENDLY_CAPTCHA_VERSIONS = ['v1', 'v2', '1', '2'];
+
 // The only values CapSkip maps to a proxy scheme; it answers
 // ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
 // case-insensitively, as the server does.
@@ -48,6 +72,15 @@ const PARAM_ALIASES = {
   challengeURL: 'challenge_url',
   challengeJson: 'challenge_json',
   challengeJSON: 'challenge_json',
+  // The server reads userAgent and useragent interchangeably on every method
+  // that takes one, so the SDK settles on the lowercase spelling its parameter
+  // tables document and accepts the camelCase one callers arrive with.
+  userAgent: 'useragent',
+  user_agent: 'useragent',
+  captchaKey: 'captchakey',
+  moduleScript: 'module_script',
+  nomoduleScript: 'nomodule_script',
+  noModuleScript: 'nomodule_script',
 };
 
 function has(obj, key) {
@@ -233,6 +266,93 @@ function validateAltchaSubmit(params) {
   }
 }
 
+/**
+ * Drop parameters left unset so an omitted optional is not sent as "undefined".
+ *
+ * The form body can only carry strings, so a default of undefined would
+ * otherwise reach the server stringified. Mirrors the server, which reads a
+ * JSON-body `null` as "not sent".
+ */
+function dropUnset(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function validateCapySubmit(params) {
+  // Both are documented as required; without captchakey the server answers
+  // ERROR_BAD_PARAMETERS and without pageurl ERROR_PAGEURL. Fail locally so a
+  // missing value does not cost a round-trip.
+  for (const key of ['captchakey', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for Capy.`);
+    }
+  }
+
+  const version = params.version;
+  if (version !== undefined && version !== null && version !== ''
+      && !CAPY_VERSIONS.includes(String(version).toLowerCase())) {
+    throw new ValidationException(
+      `Unsupported Capy version '${version}'. CapSkip solves the puzzle family `
+      + "only -- 'avatar' is a different challenge behind a different endpoint, "
+      + 'and the server refuses it rather than returning a puzzle answer the '
+      + 'target site would reject.',
+    );
+  }
+
+  const unknown = unknownKeys(params, CAPY_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for Capy: ${reprList(unknown)}.`,
+    );
+  }
+}
+
+function validateCaptchaFoxSubmit(params) {
+  for (const key of ['sitekey', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for CaptchaFox.`);
+    }
+  }
+
+  const unknown = unknownKeys(params, CAPTCHAFOX_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for CaptchaFox: ${reprList(unknown)}.`,
+    );
+  }
+}
+
+function validateFriendlyCaptchaSubmit(params) {
+  for (const key of ['sitekey', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for Friendly Captcha.`);
+    }
+  }
+
+  const version = params.version;
+  if (version !== undefined && version !== null && version !== ''
+      && !FRIENDLY_CAPTCHA_VERSIONS.includes(String(version).toLowerCase())) {
+    throw new ValidationException(
+      `Unsupported Friendly Captcha version '${version}'. Use 'v1' or 'v2' `
+      + '(a bare 1 or 2 is accepted too). The two are different protocols '
+      + 'sharing one sitekey namespace, so solving the wrong one returns a '
+      + 'well-formed token the target site rejects.',
+    );
+  }
+
+  const unknown = unknownKeys(params, FRIENDLY_CAPTCHA_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for Friendly Captcha: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -261,6 +381,15 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'altcha') {
     prepared = normalizeAltchaSubmit(prepared);
     validateAltchaSubmit(prepared);
+  } else if (captchaType === 'capy') {
+    prepared = dropUnset(prepared);
+    validateCapySubmit(prepared);
+  } else if (captchaType === 'captchafox') {
+    prepared = dropUnset(prepared);
+    validateCaptchaFoxSubmit(prepared);
+  } else if (captchaType === 'friendly_captcha') {
+    prepared = dropUnset(prepared);
+    validateFriendlyCaptchaSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -278,6 +407,11 @@ module.exports = {
   TURNSTILE_SUBMIT,
   GEETEST_SUBMIT,
   ALTCHA_SUBMIT,
+  CAPY_SUBMIT,
+  CAPTCHAFOX_SUBMIT,
+  FRIENDLY_CAPTCHA_SUBMIT,
+  CAPY_VERSIONS,
+  FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
   PARAM_ALIASES,
   applyParamAliases,
@@ -288,6 +422,10 @@ module.exports = {
   validateGeetestSubmit,
   normalizeAltchaSubmit,
   validateAltchaSubmit,
+  dropUnset,
+  validateCapySubmit,
+  validateCaptchaFoxSubmit,
+  validateFriendlyCaptchaSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

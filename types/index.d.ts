@@ -1,6 +1,6 @@
 // Type definitions for the CapSkip Node.js SDK.
 
-/** Proxy passed to reCAPTCHA / Turnstile / GeeTest solves. */
+/** Proxy passed to any solve except image captcha. */
 export interface Proxy {
   /** Proxy type: `HTTP`, `HTTPS`, `SOCKS5`, or `SOCKS5H`. */
   type: string;
@@ -18,7 +18,11 @@ export interface CapSkipOptions {
   port?: number;
   /** Seconds to poll an image captcha before timing out. Default `120`. */
   defaultTimeout?: number;
-  /** Seconds to poll reCAPTCHA / Turnstile / GeeTest before timing out. Default `300`. */
+  /**
+   * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
+   * Captcha before timing out. Default `300`. ALTCHA and Capy use
+   * `defaultTimeout` instead — neither is a browser solve.
+   */
   recaptchaTimeout?: number;
   /** Max seconds between polls; starts at `0.25` and backs off to this. Default `5`. */
   pollingInterval?: number;
@@ -32,10 +36,15 @@ export interface SolveResult {
    * The solution: recognized text for images, a token otherwise. For GeeTest
    * this is the raw JSON string CapSkip returns — prefer the parsed
    * `challenge` / `validate` / `seccode` fields below. For ALTCHA it is the
-   * base64 token, also exposed as `token`.
+   * base64 token, also exposed as `token`. For Capy it is the raw answer
+   * object, expanded into the three fields below.
    */
-  code: string;
-  /** Turnstile only — the User-Agent to use when submitting the token. */
+  code: string | Record<string, unknown>;
+  /**
+   * Turnstile and CaptchaFox — the User-Agent to use when submitting the token.
+   * For CaptchaFox this is the browser's own, not one you sent, and it is absent
+   * when the solve captured none rather than guessed.
+   */
   userAgent?: string;
   /** GeeTest only — the `geetest_challenge` value to post back. */
   challenge?: string;
@@ -50,6 +59,20 @@ export interface SolveResult {
   token?: string;
   /** ALTCHA only — the counter that solved the challenge. */
   number?: number;
+  /** Capy only — the value for the target form's `capy_captchakey` field. */
+  captchakey?: string;
+  /** Capy only — the value for the target form's `capy_challengekey` field. */
+  challengekey?: string;
+  /**
+   * Capy only — the value for the target form's `capy_answer` field. The drag
+   * path the widget would have recorded; submit it verbatim.
+   */
+  answer?: string;
+  /**
+   * Capy only — empty for a puzzle solve. Present for shape compatibility with
+   * 2Captcha's documented response; it carries nothing.
+   */
+  respKey?: string;
 }
 
 /** Extra options for {@link CapSkip.normal}. */
@@ -141,6 +164,81 @@ export interface AltchaOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.capy}. */
+export interface CapyOptions {
+  /** Root of the Capy API the key lives behind (alias for `api_server`). */
+  apiServer?: string;
+  /** Root of the Capy API the key lives behind. Default `https://jp.api.capy.me`. */
+  api_server?: string;
+  /**
+   * The challenge family. Only `"puzzle"` (the default) is solved — `"avatar"`
+   * is refused before the request is made.
+   */
+  version?: string;
+  /** User-Agent to send with the puzzle request (alias for `useragent`). */
+  userAgent?: string;
+  /** User-Agent to send with the puzzle request. */
+  useragent?: string;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy — used for the puzzle-image fetch, the only request a Capy solve makes. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
+/** Extra options for {@link CapSkip.captchafox}. */
+export interface CaptchaFoxOptions {
+  /** Widget entry point (alias for `api_server`). */
+  apiServer?: string;
+  /**
+   * Widget entry point. Default `https://cdn.captchafox.com/`. The MAM package
+   * path returns a `MAM_` prefixed token instead.
+   */
+  api_server?: string;
+  /** Accepted for compatibility and not applied (alias for `useragent`). */
+  userAgent?: string;
+  /** Accepted for compatibility and not applied — CapSkip uses its own browser. */
+  useragent?: string;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
+/** Extra options for {@link CapSkip.friendlyCaptcha}. */
+export interface FriendlyCaptchaOptions {
+  /** Protocol version: `"v1"` (default) or `"v2"`; a bare `1` or `2` works too. */
+  version?: string | number;
+  /** `src` of the widget script tag carrying `type="module"` (alias). */
+  moduleScript?: string;
+  /** `src` of the widget script tag carrying `type="module"`. */
+  module_script?: string;
+  /** `src` of the widget script tag carrying `nomodule` (alias). */
+  nomoduleScript?: string;
+  /** `src` of the widget script tag carrying `nomodule`. */
+  nomodule_script?: string;
+  /** Data residency tenant (alias for `api_server`). */
+  apiServer?: string;
+  /** Data residency tenant: `"global"` (default), `"eu"`, or a full URL. */
+  api_server?: string;
+  /** User-Agent to send with the request (alias for `useragent`). */
+  userAgent?: string;
+  /** User-Agent to send with the request. */
+  useragent?: string;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -188,6 +286,40 @@ export class CapSkip {
    * wins. Challenges expire fast, so fetch one immediately before calling.
    */
   altcha(url: string, options?: AltchaOptions): Promise<SolveResult>;
+  /**
+   * Solve a Capy Puzzle captcha.
+   *
+   * `sitekey` is the site's public Capy key, conventionally prefixed `PUZZLE_`,
+   * and is sent as the `captchakey` the API documents. The result is not a
+   * token: it carries `captchakey`, `challengekey` and `answer`, all three of
+   * which go into the target form.
+   */
+  capy(sitekey: string, url: string, options?: CapyOptions): Promise<SolveResult>;
+  /**
+   * Solve a CaptchaFox challenge.
+   *
+   * `url` has to be the page the widget actually runs on — CaptchaFox checks it
+   * against the domains the key is registered for. The result carries `token`
+   * for the form's `cf-captcha-response` field.
+   */
+  captchafox(
+    sitekey: string,
+    url: string,
+    options?: CaptchaFoxOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve a Friendly Captcha proof-of-work challenge.
+   *
+   * Two different protocols ship under this name and a sitekey does not say
+   * which, so pass `version`, or pass `moduleScript` and let CapSkip read it off
+   * the build the site loads. The token goes into `frc-captcha-solution` on v1
+   * or `frc-captcha-response` on v2.
+   */
+  friendlyCaptcha(
+    sitekey: string,
+    url: string,
+    options?: FriendlyCaptchaOptions,
+  ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;
   /** Submit a captcha without polling; resolves to the captcha id. */

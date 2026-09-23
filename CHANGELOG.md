@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-22
+
+### Added
+
+- **Capy Puzzle support** via `capy(sitekey, url, options)`. The site key
+  (conventionally prefixed `PUZZLE_`) is sent as the `captchakey` the API
+  documents. Optional `api_server` selects the Capy API the key lives behind,
+  defaulting to `https://jp.api.capy.me`.
+  A Capy answer is **not a token**: the result expands into `captchakey`,
+  `challengekey` and `answer`, which go into the target form's `capy_captchakey`,
+  `capy_challengekey` and `capy_answer` fields. `code` keeps the raw answer.
+- **CaptchaFox support** via `captchafox(sitekey, url, options)`. The result
+  exposes `token` (for the form's `cf-captcha-response` field) and, when the
+  solve reported one, `userAgent` — the UA the browser actually minted the token
+  under, which is not the one you sent. Optional `api_server` selects the widget
+  source; the MAM package returns a `MAM_` prefixed token.
+- **Friendly Captcha support** via `friendlyCaptcha(sitekey, url, options)`.
+  Pass `version` (`v1`/`v2`, or a bare `1`/`2`), or `moduleScript` /
+  `nomoduleScript` with the widget script URLs and let CapSkip read the version
+  off the build the site actually loads. Optional `api_server` accepts `global`
+  (the default), `eu`, or a full URL for the data-residency tenant. The result
+  exposes `token`, for `frc-captcha-solution` on v1 or `frc-captcha-response` on
+  v2.
+- Parameter aliases `userAgent`/`user_agent` for `useragent`, `captchaKey` for
+  `captchakey`, and `moduleScript`/`nomoduleScript` for `module_script` /
+  `nomodule_script`.
+- TypeScript definitions for `CapyOptions`, `CaptchaFoxOptions` and
+  `FriendlyCaptchaOptions`, plus the new `SolveResult` fields.
+
+### Notes
+
+- `version: 'avatar'` is refused locally for Capy. CapSkip solves the puzzle
+  family only, and answering an avatar request with a puzzle answer would bill
+  for a solve the target site rejects, indistinguishably from a broken solver.
+- An unknown Friendly Captcha `version` is refused locally too. The two versions
+  are different protocols sharing one sitekey namespace, so solving the wrong one
+  returns a well-formed token the site rejects with nothing to indicate why.
+- CaptchaFox and Friendly Captcha use `recaptchaTimeout`: the first is a real
+  browser solve, and the second has its difficulty set per request by the service
+  (and always solves in a browser on v2). Capy uses `defaultTimeout` — it is one
+  HTTP fetch plus pixel math, held back to roughly two seconds because Capy
+  refuses answers that arrive faster than a human could have produced them.
+
 ## [1.2.0] - 2026-09-12
 
 ### Added

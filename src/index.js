@@ -27,5 +27,5 @@ module.exports = {
   NetworkException,
   ApiException,
   TimeoutException,
-  version: '1.1.0',
+  version: '1.4.0',
 };

@@ -5,6 +5,47 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-01
+
+### Added
+
+- **AWS WAF support** via `amazonWaf(sitekey, url, options)`, sent as
+  `method=amazon_waf`. Only `sitekey` and `url` are required.
+  On a challenge page (the HTTP 405 page with `window.gokuProps`), `sitekey`,
+  `iv` and `context` are `gokuProps.key`, `.iv` and `.context`, and
+  `challenge_script` / `captcha_script` are the page's challenge.js and
+  captcha.js. On a widget page (`AwsWafCaptcha.renderCaptcha`), `sitekey` is the
+  widget's `apiKey` and `jsapiScript` the URL of jsapi.js.
+  An AWS WAF answer is **not a token**: the result expands into
+  `captcha_voucher` and `existing_token`, which the site's `voucher` endpoint
+  (beside challenge.js) trades for the `aws-waf-token` cookie. `code` keeps the
+  raw answer.
+- Parameter aliases `challengeScript` for `challenge_script`, `captchaScript`
+  for `captcha_script`, and `jsapi_script` for `jsapiScript`.
+- TypeScript definitions for `AmazonWafOptions`, plus the new `SolveResult`
+  fields.
+- `examples/amazon_waf.js`.
+
+### Changed
+
+- The Capy answer expansion is now a shared helper, used by Capy and AWS WAF
+  alike. Capy results are unchanged.
+- The exported `version` constant now reports the package version; it had been
+  left at `1.1.0`.
+
+### Notes
+
+- `iv` and `context` are optional but travel together: one without the other is
+  refused locally, as the server would refuse it. Left out, CapSkip reads both
+  from the page at solve time. An optional passed as `''` is treated as not
+  sent, the way the server reads it.
+- Every script URL must be `https` on an `awswaf.com` host, with no credentials,
+  no port other than 443, and a path ending in `challenge.js`, `captcha.js` or
+  `jsapi.js`. CapSkip posts the solution to the host the script names, so any
+  other script is refused before the request is made.
+- AWS WAF uses `recaptchaTimeout`: a real browser mints the token the voucher is
+  issued for.
+
 ## [1.3.0] - 2026-09-22
 
 ### Added

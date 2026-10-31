@@ -222,7 +222,7 @@ function applyAltchaSolution(result) {
 const CAPY_FIELDS = ['captchakey', 'challengekey', 'answer', 'respKey'];
 
 /**
- * Expand the Capy answer into `captchakey` / `challengekey` / `answer`.
+ * Copy `fields` out of an answer that is an object rather than a token.
  *
  * `code` keeps the raw answer -- an object when polled with json=1, where the
  * server puts it straight into `request`, or the JSON string it sends after
@@ -232,7 +232,7 @@ const CAPY_FIELDS = ['captchakey', 'challengekey', 'answer', 'respKey'];
  * If the answer does not parse, the result is returned untouched rather than
  * masking the server's reply.
  */
-function applyCapySolution(result) {
+function expandObjectAnswer(result, fields) {
   let payload = result.solution;
   delete result.solution;
 
@@ -253,13 +253,28 @@ function applyCapySolution(result) {
     return result;
   }
 
-  for (const field of CAPY_FIELDS) {
+  for (const field of fields) {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
       result[field] = payload[field];
     }
   }
 
   return result;
+}
+
+/** Expand the Capy answer into `captchakey` / `challengekey` / `answer`. */
+function applyCapySolution(result) {
+  return expandObjectAnswer(result, CAPY_FIELDS);
+}
+
+// An AWS WAF solution is two values that only work as a pair: the voucher AWS
+// issued for the answered puzzle, and the token it was issued for. The site's
+// own /voucher endpoint trades them for the aws-waf-token cookie.
+const AMAZON_WAF_FIELDS = ['captcha_voucher', 'existing_token'];
+
+/** Expand the AWS WAF answer into `captcha_voucher` / `existing_token`. */
+function applyAmazonWafSolution(result) {
+  return expandObjectAnswer(result, AMAZON_WAF_FIELDS);
 }
 
 /**
@@ -309,7 +324,10 @@ function parseSubmitResponse(response) {
   throw new ApiException(`cannot recognize response ${response}`);
 }
 
-/** Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile, GeeTest v3, ALTCHA). */
+/**
+ * Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile,
+ * GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF).
+ */
 class CapSkip {
   constructor({
     apiKey = 'capskip',
@@ -553,6 +571,55 @@ class CapSkip {
     return applyTokenSolution(result);
   }
 
+  /**
+   * Solve an AWS WAF (Amazon WAF) CAPTCHA.
+   *
+   * Only `sitekey` and `url` are required:
+   *
+   * - On a challenge page (the HTTP 405 page with `window.gokuProps`), `sitekey`
+   *   is `gokuProps.key`, and `iv` and `context` are `gokuProps.iv` and
+   *   `gokuProps.context`. Send both or neither -- left out, CapSkip reads them
+   *   from `url` at solve time, which is the safer choice when your copy of the
+   *   page is more than a few minutes old. `challenge_script` and
+   *   `captcha_script` are the full URLs of the page's challenge.js and
+   *   captcha.js.
+   * - On a widget page (`AwsWafCaptcha.renderCaptcha`), `sitekey` is the
+   *   widget's `apiKey`; pass `jsapiScript` with the full URL of jsapi.js and no
+   *   `iv` / `context`.
+   *
+   * Every script URL must be an https URL on an awswaf.com host; anything else
+   * is refused before the request is sent.
+   *
+   * The result carries `captcha_voucher` and `existing_token`, plus the raw
+   * answer as `code`. The two only work as a pair: POST them as JSON to the
+   * `voucher` endpoint next to the page's challenge.js and the response's
+   * `token` is the aws-waf-token cookie. Exchange them as soon as they arrive
+   * rather than storing them for later.
+   */
+  async amazonWaf(sitekey, url, options = {}) {
+    // An unset optional is dropped rather than sent as undefined; an empty one
+    // is dropped during validation, since the server reads '' as "not sent".
+    const given = {};
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    }
+
+    // A real browser mints the token the voucher is issued for, and the puzzle
+    // rounds go through AWS on top of that, so it gets the longer of the two
+    // timeouts unless the caller asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      sitekey,
+      url,
+      ...given,
+      method: 'amazon_waf',
+      poll_json: 1,
+    });
+    return applyAmazonWafSolution(result);
+  }
+
   async solve(options = {}) {
     const {
       timeout = 0,
@@ -653,6 +720,9 @@ class CapSkip {
     if (method === 'friendly_captcha') {
       return prepareSubmitParams(params, 'friendly_captcha');
     }
+    if (method === 'amazon_waf') {
+      return prepareSubmitParams(params, 'amazon_waf');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -667,5 +737,7 @@ module.exports = {
   applyGeetestSolution,
   applyAltchaSolution,
   applyCapySolution,
+  applyAmazonWafSolution,
+  expandObjectAnswer,
   applyTokenSolution,
 };

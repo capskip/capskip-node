@@ -46,6 +46,19 @@ const FRIENDLY_CAPTCHA_SUBMIT = new Set([
   'api_server', 'useragent', 'json', 'proxy', 'proxytype',
 ]);
 
+const AMAZON_WAF_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'iv', 'context', 'challenge_script',
+  'captcha_script', 'jsapiScript', 'json', 'proxy', 'proxytype',
+]);
+
+// The script parameters of an AWS WAF task. CapSkip POSTs the solution to the
+// host these name, so it refuses any that is not a genuine AWS WAF one.
+const AMAZON_WAF_SCRIPTS = ['challenge_script', 'captcha_script', 'jsapiScript'];
+
+// The server's own test: one or more [A-Za-z0-9_-] path segments, then one of
+// the three AWS WAF script files.
+const AMAZON_WAF_SCRIPT_PATH = /^(\/[A-Za-z0-9_-]+)+\/(challenge|captcha|jsapi)\.js$/;
+
 // CapSkip solves the puzzle family only. `avatar` is a different challenge
 // behind a different endpoint; the server refuses it at submit time rather than
 // answering it with a puzzle answer, which would bill for a solve the target
@@ -81,6 +94,12 @@ const PARAM_ALIASES = {
   moduleScript: 'module_script',
   nomoduleScript: 'nomodule_script',
   noModuleScript: 'nomodule_script',
+  // AWS WAF: the API documents challenge_script / captcha_script in snake case
+  // and jsapiScript in camel case, as 2Captcha does. Accept the other spelling
+  // of each, which is what createTask-style callers arrive with.
+  challengeScript: 'challenge_script',
+  captchaScript: 'captcha_script',
+  jsapi_script: 'jsapiScript',
 };
 
 function has(obj, key) {
@@ -353,6 +372,90 @@ function validateFriendlyCaptchaSubmit(params) {
   }
 }
 
+/**
+ * True for a script URL CapSkip will accept on an AWS WAF task.
+ *
+ * Mirrors the server: https, a host under .awswaf.com, no credentials or
+ * explicit port, and a path ending in challenge.js, captcha.js or jsapi.js.
+ * The server only applies the check once the task is queued, so failing here
+ * saves a submit that could never solve.
+ */
+function isAmazonWafScriptUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url).trim());
+  } catch (error) {
+    return false;
+  }
+  // WHATWG URL already lowercases the scheme and host, and drops a :443 on an
+  // https URL, so `port` is empty for both the default and an explicit 443.
+  return parsed.protocol === 'https:'
+    && parsed.hostname.toLowerCase().endsWith('.awswaf.com')
+    && parsed.username === ''
+    && parsed.password === ''
+    && (parsed.port === '' || parsed.port === '443')
+    && AMAZON_WAF_SCRIPT_PATH.test(parsed.pathname);
+}
+
+/**
+ * Drop unset optionals, and the empty ones too: an AWS WAF optional left as ''
+ * means "not sent" to the server, exactly like an absent one, so it is dropped
+ * rather than tripping the iv/context pairing.
+ */
+function normalizeAmazonWafSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function validateAmazonWafSubmit(params) {
+  // Without sitekey the server answers ERROR_BAD_PARAMETERS and without
+  // pageurl ERROR_PAGEURL. Fail locally so a missing value costs no round-trip.
+  for (const key of ['sitekey', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for Amazon WAF.`);
+    }
+  }
+
+  const pageurl = String(params.pageurl).trim();
+  if (!/^https?:\/\//i.test(pageurl)) {
+    throw new ValidationException(
+      `'pageurl' must be a full http or https URL for Amazon WAF, got '${pageurl}'.`,
+    );
+  }
+
+  // iv and context come off the same challenge page and only work as a pair;
+  // the server refuses one without the other with ERROR_BAD_PARAMETERS.
+  if (Boolean(params.iv) !== Boolean(params.context)) {
+    throw new ValidationException(
+      "Amazon WAF 'iv' and 'context' go together: send both (a challenge "
+      + 'page) or neither (a widget page, or let CapSkip read them from pageurl).',
+    );
+  }
+
+  for (const key of AMAZON_WAF_SCRIPTS) {
+    const value = params[key];
+    if (value && !isAmazonWafScriptUrl(value)) {
+      throw new ValidationException(
+        `'${key}' must be the https URL of an AWS WAF script on an awswaf.com `
+        + `host (challenge.js, captcha.js or jsapi.js), got '${value}'. CapSkip `
+        + 'refuses any other script, because it is not an AWS WAF integration.',
+      );
+    }
+  }
+
+  const unknown = unknownKeys(params, AMAZON_WAF_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for Amazon WAF: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -390,6 +493,9 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'friendly_captcha') {
     prepared = dropUnset(prepared);
     validateFriendlyCaptchaSubmit(prepared);
+  } else if (captchaType === 'amazon_waf') {
+    prepared = normalizeAmazonWafSubmit(prepared);
+    validateAmazonWafSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -410,6 +516,8 @@ module.exports = {
   CAPY_SUBMIT,
   CAPTCHAFOX_SUBMIT,
   FRIENDLY_CAPTCHA_SUBMIT,
+  AMAZON_WAF_SUBMIT,
+  AMAZON_WAF_SCRIPTS,
   CAPY_VERSIONS,
   FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
@@ -426,6 +534,9 @@ module.exports = {
   validateCapySubmit,
   validateCaptchaFoxSubmit,
   validateFriendlyCaptchaSubmit,
+  isAmazonWafScriptUrl,
+  normalizeAmazonWafSubmit,
+  validateAmazonWafSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

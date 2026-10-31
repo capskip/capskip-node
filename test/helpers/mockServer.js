@@ -44,6 +44,15 @@ const CAPTCHAFOX_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWe
 const FRIENDLY_CAPTCHA_TOKEN = 'c62c4da36bbaf7f253873035832709ef.'
   + 'aqwpWwdbzRWKY/UQAQwwpgAAAAAAAAAAM7hBvJOzqjc=.AAAAAArcCQABAAAAxv8QAAIAAACKYRgA.AgAB';
 
+// An AWS WAF answer is two values that only work as a pair, so like Capy's it
+// is an object: json=1 puts it straight into `request`, and plain text sends it
+// as one line of JSON after OK|. The shapes follow what AWS really issues -- a
+// dotted voucher, and a token of three colon-separated parts.
+const AMAZON_WAF_SOLUTION = {
+  captcha_voucher: 'eyJ2b3VjaGVyIjoiRVhBTVBMRSJ9.9QwZcEXAMPLEvoucherJk4LmN0pQ',
+  existing_token: '7d4c2a91-EXAMPLE-4f0b-9e6d-3a1b5c8e2f70:EQoAeXAMPLEtokenAAAA:Wm9wc2E=',
+};
+
 // A minimal valid 1x1 PNG. The mock returns these bytes for /image.png and the
 // SDK never inspects the content, so exact pixels do not matter.
 const PNG = Buffer.from(
@@ -59,6 +68,9 @@ function send(res, text, ctype = 'text/plain') {
 
 function createMockServer() {
   let ids = 0;
+  // Every decoded in.php form body, newest last, so a test can check what
+  // actually crossed the wire.
+  const submissions = [];
   const idType = {};
   const pollCount = {};
 
@@ -109,6 +121,17 @@ function createMockServer() {
       } else {
         send(res, `OK|${JSON.stringify(CAPY_SOLUTION)}`);
       }
+    } else if (idType[cid] === 'amazon_waf') {
+      // What CapSkip sends: the bare status/request pair, with the two-value
+      // object as `request` -- no createTask `solution`.
+      if (wantJson) {
+        send(res, JSON.stringify({
+          status: 1,
+          request: AMAZON_WAF_SOLUTION,
+        }), 'application/json');
+      } else {
+        send(res, `OK|${JSON.stringify(AMAZON_WAF_SOLUTION)}`);
+      }
     } else if (idType[cid] === 'captchafox') {
       // The UA is the browser's own, and CapSkip reports it at the top level
       // and inside solution both.
@@ -157,6 +180,7 @@ function createMockServer() {
       return;
     }
 
+    submissions.push(fields);
     const pageurl = fields.pageurl || '';
     ids += 1;
     let cid;
@@ -178,7 +202,7 @@ function createMockServer() {
     }
   };
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const parsed = new URL(req.url, 'http://localhost');
 
     if (req.method === 'GET' && parsed.pathname === '/image.png') {
@@ -201,6 +225,8 @@ function createMockServer() {
 
     send(res, 'ERROR_NOT_FOUND');
   });
+  server.submissions = submissions;
+  return server;
 }
 
 /** Start the mock server on a random loopback port. */
@@ -223,6 +249,7 @@ module.exports = {
   CAPTCHAFOX_TOKEN,
   CAPTCHAFOX_USER_AGENT,
   FRIENDLY_CAPTCHA_TOKEN,
+  AMAZON_WAF_SOLUTION,
   PNG,
   createMockServer,
   startMockServer,

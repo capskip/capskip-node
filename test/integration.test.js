@@ -17,6 +17,7 @@ const {
 const {
   startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
   CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
+  AMAZON_WAF_SOLUTION,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -287,4 +288,80 @@ test('friendlyCaptcha token survives the wire verbatim', async () => {
 test('friendlyCaptcha with a bad version is refused locally', async () => {
   const solver = makeSolver();
   await assert.rejects(() => solver.friendlyCaptcha(FRIENDLY_SITEKEY, URL, { version: 'v3' }));
+});
+
+// -- AWS WAF -----------------------------------------------------------------
+
+const WAF_KEY = 'AQIDAHjcYuEXAMPLEghicBgQ/7bFaQZ+m5FKCMDnO+vTbNg96AHDh0IR5vgzHNceHYqZR+GOAAAAfjB8';
+const WAF_IV = 'CgAFRDIjfgAAA5yY';
+const WAF_CONTEXT = 'Rbp3r8fvbuhmrCqpUe8Mh1TLvs8OSKJZiSs2vCF4dt9rxVZI7xYJa2n5k/9r+XaXe7KUIu2I8nXTDHHkDvIOTDc2';
+const WAF_CHALLENGE_JS = 'https://3f2a9c7d41b0.edge.sdk.awswaf.com/3f2a9c7d41b0/8e51d0c7a2f4/challenge.js';
+const WAF_WIDGET_KEY = 'Xr9kEXAMPLE2bWQx1vTq8LmZ0aYc4dHs7nFp3gJt6uKw5eRi9AbCdEfGh=_0_1';
+const WAF_JSAPI = 'https://5b7e0a19c3d8.us-east-1.captcha-sdk.awswaf.com/5b7e0a19c3d8/jsapi.js';
+
+function lastSubmission() {
+  return server.submissions[server.submissions.length - 1];
+}
+
+test('amazonWaf over HTTP: challenge page', async () => {
+  const solver = makeSolver();
+  const r = await solver.amazonWaf(WAF_KEY, URL, {
+    iv: WAF_IV, context: WAF_CONTEXT, challenge_script: WAF_CHALLENGE_JS,
+  });
+  assert.strictEqual(r.captcha_voucher, AMAZON_WAF_SOLUTION.captcha_voucher);
+  assert.strictEqual(r.existing_token, AMAZON_WAF_SOLUTION.existing_token);
+  assert.deepStrictEqual(r.code, AMAZON_WAF_SOLUTION);
+  assert.ok(r.captchaId);
+  assert.strictEqual(lastSubmission().challenge_script, WAF_CHALLENGE_JS);
+});
+
+test('amazonWaf over HTTP: widget page', async () => {
+  const solver = makeSolver();
+  const r = await solver.amazonWaf(WAF_WIDGET_KEY, URL, { jsapiScript: WAF_JSAPI });
+  assert.strictEqual(r.captcha_voucher, AMAZON_WAF_SOLUTION.captcha_voucher);
+  assert.strictEqual(r.existing_token, AMAZON_WAF_SOLUTION.existing_token);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'amazon_waf');
+  assert.strictEqual(sent.sitekey, WAF_WIDGET_KEY);
+  assert.strictEqual(sent.jsapiScript, WAF_JSAPI);
+  assert.ok(!('iv' in sent) && !('context' in sent));
+});
+
+test('amazonWaf keys with + / = cross the wire intact', async () => {
+  // The keys carry +, / and =, which a form body has to URL-encode; a key
+  // mangled on the way would be a different firewall configuration.
+  const solver = makeSolver();
+  const key = `${WAF_KEY}==`;
+  const r = await solver.amazonWaf(key, URL, { iv: WAF_IV, context: WAF_CONTEXT });
+  assert.strictEqual(r.existing_token, AMAZON_WAF_SOLUTION.existing_token);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.sitekey, key);
+  assert.strictEqual(sent.iv, WAF_IV);
+  assert.strictEqual(sent.context, WAF_CONTEXT);
+});
+
+test('amazonWaf plain-text answer is one line of JSON', async () => {
+  // Polled without json=1, the object arrives as a JSON string after OK|.
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'amazon_waf', sitekey: WAF_KEY, pageurl: URL });
+  const raw = await solver.getResult(id);
+  assert.deepStrictEqual(JSON.parse(raw), AMAZON_WAF_SOLUTION);
+});
+
+test('amazonWaf with a lone iv is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.amazonWaf(WAF_KEY, URL, { iv: WAF_IV }));
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('amazonWaf with an off-AWS script is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.amazonWaf(WAF_KEY, URL, {
+    jsapiScript: 'https://evil.example/jsapi.js',
+  }));
+  assert.strictEqual(server.submissions.length, sentBefore);
 });

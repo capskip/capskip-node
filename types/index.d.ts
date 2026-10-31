@@ -20,7 +20,7 @@ export interface CapSkipOptions {
   defaultTimeout?: number;
   /**
    * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
-   * Captcha before timing out. Default `300`. ALTCHA and Capy use
+   * Captcha / AWS WAF before timing out. Default `300`. ALTCHA and Capy use
    * `defaultTimeout` instead — neither is a browser solve.
    */
   recaptchaTimeout?: number;
@@ -36,8 +36,8 @@ export interface SolveResult {
    * The solution: recognized text for images, a token otherwise. For GeeTest
    * this is the raw JSON string CapSkip returns — prefer the parsed
    * `challenge` / `validate` / `seccode` fields below. For ALTCHA it is the
-   * base64 token, also exposed as `token`. For Capy it is the raw answer
-   * object, expanded into the three fields below.
+   * base64 token, also exposed as `token`. For Capy and AWS WAF it is the raw
+   * answer object, expanded into the fields below.
    */
   code: string | Record<string, unknown>;
   /**
@@ -73,6 +73,15 @@ export interface SolveResult {
    * 2Captcha's documented response; it carries nothing.
    */
   respKey?: string;
+  /**
+   * AWS WAF only — the voucher AWS issued for the answered puzzle. Only valid
+   * together with `existing_token`: POST both as JSON to the `voucher` endpoint
+   * beside the page's challenge.js, whose response `token` is the
+   * `aws-waf-token` cookie. Exchange immediately.
+   */
+  captcha_voucher?: string;
+  /** AWS WAF only — the token the voucher was issued for. Pair with `captcha_voucher`. */
+  existing_token?: string;
 }
 
 /** Extra options for {@link CapSkip.normal}. */
@@ -239,6 +248,38 @@ export interface FriendlyCaptchaOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.amazonWaf}. */
+export interface AmazonWafOptions {
+  /**
+   * Challenge page: `gokuProps.iv`. Send together with `context`, or leave both
+   * out and CapSkip reads them from the page at solve time.
+   */
+  iv?: string;
+  /** Challenge page: `gokuProps.context`. Send together with `iv`. */
+  context?: string;
+  /** Full https URL of the page's `challenge.js` on an `awswaf.com` host. */
+  challenge_script?: string;
+  /** Full https URL of the page's `challenge.js` (alias for `challenge_script`). */
+  challengeScript?: string;
+  /** Full https URL of the page's `captcha.js` on an `awswaf.com` host. */
+  captcha_script?: string;
+  /** Full https URL of the page's `captcha.js` (alias for `captcha_script`). */
+  captchaScript?: string;
+  /** Widget page: full https URL of `jsapi.js` on an `awswaf.com` host. */
+  jsapiScript?: string;
+  /** Widget page: full https URL of `jsapi.js` (alias for `jsapiScript`). */
+  jsapi_script?: string;
+  /** Poll timeout in seconds. Default: the client's `recaptchaTimeout`. */
+  timeout?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. */
+  proxytype?: string;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -319,6 +360,21 @@ export class CapSkip {
     sitekey: string,
     url: string,
     options?: FriendlyCaptchaOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve an AWS WAF CAPTCHA.
+   *
+   * On a challenge page, `sitekey` is `gokuProps.key` and `iv` / `context` are
+   * `gokuProps.iv` / `gokuProps.context` (both or neither). On a widget page,
+   * `sitekey` is the widget's `apiKey`; pass `jsapiScript`. Script URLs must be
+   * https on an `awswaf.com` host. The result carries `captcha_voucher` and
+   * `existing_token`, which the site's `voucher` endpoint trades for the
+   * `aws-waf-token` cookie.
+   */
+  amazonWaf(
+    sitekey: string,
+    url: string,
+    options?: AmazonWafOptions,
   ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;

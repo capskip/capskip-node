@@ -9,7 +9,7 @@ POST http://<host>:<port>/in.php   → submit captcha
 GET  http://<host>:<port>/res.php  → poll result
 ```
 
-The SDK only supports the four captcha types documented by CapSkip. Every solve
+The SDK only supports the captcha types documented by CapSkip. Every solve
 method returns a `Promise`.
 
 ---
@@ -27,6 +27,7 @@ method returns a `Promise`.
 | Capy Puzzle (slide) | `capy()` | `capy` |
 | CaptchaFox (widget) | `captchafox()` | `captchafox` |
 | Friendly Captcha (proof-of-work) | `friendlyCaptcha()` | `friendly_captcha` |
+| AWS WAF (challenge page or widget) | `amazonWaf()` | `amazon_waf` |
 
 **Proxy** is supported for every method except image captcha. For ALTCHA the
 proxy is used only for the `challengeUrl` fetch; for Capy, only for the
@@ -612,6 +613,106 @@ browser.
 
 ---
 
+## 10. AWS WAF — `amazonWaf(sitekey, url, { ... })`
+
+AWS WAF puts its CAPTCHA either on a challenge page — the HTTP 405 interstitial
+that sets `window.gokuProps` — or in a widget an ordinary page renders with
+`AwsWafCaptcha.renderCaptcha`. CapSkip solves both in a real browser. See the
+[CapSkip API docs](https://capskip.com/api-docs/#aws-waf).
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `amazon_waf` |
+| `sitekey` | string | Yes | Challenge page: `gokuProps.key`. Widget page: the widget's `apiKey` |
+| `pageurl` | string | Yes | Full http or https URL of the protected page |
+| `iv` | string | No | Challenge page: `gokuProps.iv`. Send together with `context` |
+| `context` | string | No | Challenge page: `gokuProps.context`. Send together with `iv` |
+| `challenge_script` | string | No | Full URL of the page's `challenge.js` |
+| `captcha_script` | string | No | Full URL of the page's `captcha.js` |
+| `jsapiScript` | string | No | Widget page: full URL of `jsapi.js` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+The SDK also accepts `challengeScript`, `captchaScript` and `jsapi_script`, and
+sends the documented spelling of each. An optional left `undefined`, `null` or
+`''` is not sent — the server reads an empty value as absent.
+
+### Challenge page or widget page
+
+| | Challenge page | Widget page |
+|---|---|---|
+| Recognized by | HTTP 405 with `window.gokuProps` in an inline script | `AwsWafCaptcha.renderCaptcha(container, { apiKey, … })` |
+| `sitekey` | `gokuProps.key` | the widget's `apiKey` |
+| `iv` / `context` | `gokuProps.iv` / `gokuProps.context`, or neither | not sent |
+| Scripts | `challenge_script`, `captcha_script` | `jsapiScript` |
+
+`iv` and `context` come off the same page and only work as a pair, so the SDK
+refuses one without the other. Both are optional: left out, CapSkip reads them
+from `pageurl` at solve time, which is the safer choice when your copy of the
+page is more than a few minutes old.
+
+### Script URLs
+
+CapSkip posts the solution to the host a script URL names, so it refuses any
+script that is not on AWS WAF. The SDK applies the server's rule before the
+request is made: the URL must be `https`, its host must end in `.awswaf.com`, it
+must carry no credentials and no port other than 443, and its path must be one
+or more segments followed by `challenge.js`, `captcha.js` or `jsapi.js`. A query
+string is allowed. Anything else throws `ValidationException`, because CapSkip is
+not an AWS WAF integration for scripts hosted elsewhere.
+
+### GET `/res.php`
+
+The answer is **not a token**. With `json=1` it is an object in `request`:
+
+```json
+{"status":1,"request":{"captcha_voucher":"…","existing_token":"…"}}
+```
+
+and in plain text the same object as one line of JSON after `OK|`. The SDK
+expands it into `captcha_voucher` and `existing_token`; see
+[Return value](#return-value).
+
+### Exchanging the voucher
+
+The two values only work as a pair. POST them as JSON to the `voucher` endpoint
+beside the page's `challenge.js` (the same directory, with `voucher` in place of
+`challenge.js`). The response's `token` is the `aws-waf-token` cookie. Exchange
+them immediately rather than storing them for later.
+
+### SDK usage
+
+```js
+// Challenge page
+const result = await solver.amazonWaf(
+  'AQIDAHjcYuEXAMPLEghicBgQ/7bFaQZ+m5FKCMDnO+vTbNg96AHDh0IR5vgzHNceHYqZR+GOAAAAfjB8',
+  'https://example.com/protected',
+  {
+    iv: 'CgAFRDIjfgAAA5yY',
+    context: 'Rbp3r8fvbuhmrCqpUe8Mh1TLvs8OSKJZiSs2vCF4dt9rxVZI7xYJa2n5k/9r+XaXe7KUIu2I8nXTDHHkDvIOTDc2',
+    challenge_script: 'https://3f2a9c7d41b0.edge.sdk.awswaf.com/3f2a9c7d41b0/8e51d0c7a2f4/challenge.js',
+  },
+);
+
+// Widget page
+const result = await solver.amazonWaf(
+  'Xr9kEXAMPLE2bWQx1vTq8LmZ0aYc4dHs7nFp3gJt6uKw5eRi9AbCdEfGh=_0_1',
+  'https://example.com/protected',
+  { jsapiScript: 'https://5b7e0a19c3d8.us-east-1.captcha-sdk.awswaf.com/5b7e0a19c3d8/jsapi.js' },
+);
+
+result.captcha_voucher, result.existing_token;
+```
+
+Uses `recaptchaTimeout`: a real browser mints the token the voucher is issued
+for, and the puzzle rounds go through AWS on top of that.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -663,6 +764,19 @@ target form takes (`code` keeps the raw answer):
 }
 ```
 
+AWS WAF returns an object too, expanded into the voucher pair the site's
+`voucher` endpoint trades for the `aws-waf-token` cookie (`code` keeps the raw
+answer):
+
+```js
+{
+  captchaId: '12345',
+  code: { captcha_voucher: '…', existing_token: '…' },
+  captcha_voucher: 'eyJ2b3VjaGVyIjoiRVhBTVBMRSJ9.9QwZcEXAMPLEvoucherJk4LmN0pQ',
+  existing_token: '7d4c2a91-EXAMPLE-4f0b-9e6d-3a1b5c8e2f70:EQoAeXAMPLEtokenAAAA:Wm9wc2E=',
+}
+```
+
 GeeTest additionally expands its answer into `challenge`, `validate`, and
 `seccode` (`code` keeps the raw JSON string):
 
@@ -697,6 +811,9 @@ Convenience aliases mapped before sending to CapSkip:
 | `captchaKey` | `captchakey` |
 | `moduleScript` | `module_script` |
 | `nomoduleScript` / `noModuleScript` | `nomodule_script` |
+| `challengeScript` | `challenge_script` |
+| `captchaScript` | `captcha_script` |
+| `jsapi_script` | `jsapiScript` |
 | `proxy` object | `proxy` + `proxytype` strings |
 
 ```js

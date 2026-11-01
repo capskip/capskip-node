@@ -59,6 +59,29 @@ const AMAZON_WAF_SCRIPTS = ['challenge_script', 'captcha_script', 'jsapiScript']
 // the three AWS WAF script files.
 const AMAZON_WAF_SCRIPT_PATH = /^(\/[A-Za-z0-9_-]+)+\/(challenge|captcha|jsapi)\.js$/;
 
+const DATADOME_SUBMIT = new Set([
+  'method', 'captcha_url', 'pageurl', 'useragent', 'json', 'proxy', 'proxytype',
+]);
+
+// Every DataDome challenge is served from this domain or a subdomain of it
+// (geo.captcha-delivery.com in practice). CapSkip refuses any other host.
+const DATADOME_CHALLENGE_DOMAIN = 'captcha-delivery.com';
+
+// The two challenge pages: /captcha/ draws the slider, /interstitial/ runs the
+// device check. Any other path renders nothing to solve.
+const DATADOME_CHALLENGE_PATHS = ['/captcha', '/interstitial'];
+
+// A Chrome version as Chrome writes it in its User-Agent: four dotted numbers.
+const CHROME_VERSION = /\bChrome\/(\d+)\.\d+\.\d+\.\d+\b/;
+
+// Chrome-derived browsers and non-desktop builds. A User-Agent carrying any of
+// these is not stock Windows Chrome, so a cookie earned under it would be
+// refused on replay; the server answers ERROR_WRONG_USERAGENT for each.
+const NOT_STOCK_WINDOWS_CHROME = [
+  'Edg/', 'EdgA/', 'OPR/', 'YaBrowser/', 'SamsungBrowser/', 'Vivaldi/',
+  'HeadlessChrome/', 'CriOS/', 'Mobile', 'Android',
+];
+
 // CapSkip solves the puzzle family only. `avatar` is a different challenge
 // behind a different endpoint; the server refuses it at submit time rather than
 // answering it with a puzzle answer, which would bill for a solve the target
@@ -100,6 +123,10 @@ const PARAM_ALIASES = {
   challengeScript: 'challenge_script',
   captchaScript: 'captcha_script',
   jsapi_script: 'jsapiScript',
+  // DataDome: 2Captcha and the API document captcha_url; createTask-style
+  // callers arrive with captchaUrl.
+  captchaUrl: 'captcha_url',
+  captchaURL: 'captcha_url',
 };
 
 function has(obj, key) {
@@ -456,6 +483,171 @@ function validateAmazonWafSubmit(params) {
   }
 }
 
+const HTML_NAMED_ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+};
+
+/**
+ * Decode HTML character references, as the server does before it parses a
+ * DataDome captcha_url: an iframe src copied out of the page source carries
+ * &amp; between its query parameters.
+ */
+function htmlUnescape(text) {
+  return text.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z]+);/g, (match, ref) => {
+    if (ref[0] === '#') {
+      const code = ref[1] === 'x' || ref[1] === 'X'
+        ? parseInt(ref.slice(2), 16)
+        : parseInt(ref.slice(1), 10);
+      try {
+        return String.fromCodePoint(code);
+      } catch (error) {
+        return match;
+      }
+    }
+    const named = HTML_NAMED_ENTITIES[ref.toLowerCase()];
+    return named === undefined ? match : named;
+  });
+}
+
+function isDataDomeHost(host) {
+  const lowered = String(host || '').toLowerCase();
+  return lowered === DATADOME_CHALLENGE_DOMAIN
+    || lowered.endsWith(`.${DATADOME_CHALLENGE_DOMAIN}`);
+}
+
+/**
+ * The query of a DataDome challenge URL as a URLSearchParams, or null if it is
+ * not one.
+ *
+ * Mirrors the server: an https URL on captcha-delivery.com (or a subdomain),
+ * path /captcha/ or /interstitial/, carrying initialCid, hash and cid. An
+ * iframe src copied HTML-escaped (&amp;) and a scheme-relative //geo... URL
+ * are both read the way the server reads them.
+ */
+function parseDataDomeCaptchaUrl(url) {
+  let text = htmlUnescape(String(url === undefined || url === null ? '' : url).trim());
+  if (text.startsWith('//')) {
+    text = `https:${text}`;
+  }
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch (error) {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' || !isDataDomeHost(parsed.hostname)) {
+    return null;
+  }
+  const pathname = parsed.pathname.replace(/\/+$/, '').toLowerCase();
+  if (!DATADOME_CHALLENGE_PATHS.includes(pathname)) {
+    return null;
+  }
+  const query = parsed.searchParams;
+  if (!['initialCid', 'hash', 'cid'].every((key) => query.get(key))) {
+    return null;
+  }
+  return query;
+}
+
+/**
+ * True for a stock Chrome-for-Windows User-Agent, the only kind CapSkip takes.
+ *
+ * DataDome ties the cookie to the browser that earned it, and CapSkip solves
+ * in Chrome on Windows, so a cookie for any other User-Agent would be refused
+ * on replay. The server also requires the same Chrome major version as its
+ * own browser; that part can only be checked there.
+ */
+function isDataDomeUserAgent(userAgent) {
+  const ua = String(userAgent === undefined || userAgent === null ? '' : userAgent);
+  return ua.includes('Windows NT ')
+    && CHROME_VERSION.test(ua)
+    && !NOT_STOCK_WINDOWS_CHROME.some((token) => ua.includes(token));
+}
+
+/**
+ * Drop unset optionals, and the empty ones too: a DataDome optional left as ''
+ * means "not sent" to the server, exactly like an absent one.
+ */
+function normalizeDataDomeSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** An absolute http(s) URL with a host that is not DataDome's own. */
+function isDataDomePageUrl(pageurl) {
+  let parsed;
+  try {
+    parsed = new URL(pageurl);
+  } catch (error) {
+    return false;
+  }
+  return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+    && parsed.hostname !== ''
+    && !isDataDomeHost(parsed.hostname);
+}
+
+function validateDataDomeSubmit(params) {
+  // Without captcha_url the server answers ERROR_BAD_PARAMETERS and without
+  // pageurl ERROR_PAGEURL. Fail locally so a missing value costs no round-trip.
+  for (const key of ['captcha_url', 'pageurl']) {
+    if (!params[key]) {
+      throw new ValidationException(`'${key}' is required for DataDome.`);
+    }
+  }
+
+  const query = parseDataDomeCaptchaUrl(params.captcha_url);
+  if (query === null) {
+    throw new ValidationException(
+      "'captcha_url' must be the https address of a DataDome challenge on "
+      + 'captcha-delivery.com, under /captcha/ or /interstitial/ and carrying '
+      + `initialCid, hash and cid, got '${params.captcha_url}'. Take it from `
+      + "the block page's iframe src, or build it from the page's `var dd` object.",
+    );
+  }
+  // t=bv is DataDome saying the address that fetched the block page is
+  // banned. Nothing sent from it can pass, and the server refuses the task
+  // with ERROR_PROXY_BANNED, so say so before the round-trip.
+  if (query.get('t') === 'bv') {
+    throw new ValidationException(
+      'This DataDome block page bans the IP address that requested it '
+      + '(t=bv), so no solve from that address can pass. Change the address '
+      + '(proxy), request the page again and submit the new captcha_url.',
+    );
+  }
+
+  const pageurl = String(params.pageurl).trim();
+  if (!isDataDomePageUrl(pageurl)) {
+    throw new ValidationException(
+      "'pageurl' must be the full http or https URL of the page that "
+      + `returned the DataDome block page, got '${pageurl}'.`,
+    );
+  }
+
+  const userAgent = params.useragent;
+  if (userAgent !== undefined && userAgent !== null && userAgent !== ''
+      && !isDataDomeUserAgent(userAgent)) {
+    throw new ValidationException(
+      "DataDome 'userAgent' must be a stock Chrome for Windows User-Agent "
+      + 'with the same major version as the browser CapSkip solves with, got '
+      + `'${userAgent}'. The cookie only works with the User-Agent that `
+      + "earned it. Leave it out and CapSkip uses its own browser's, which "
+      + 'the result reports as `userAgent`.',
+    );
+  }
+
+  const unknown = unknownKeys(params, DATADOME_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for DataDome: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -496,6 +688,9 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'amazon_waf') {
     prepared = normalizeAmazonWafSubmit(prepared);
     validateAmazonWafSubmit(prepared);
+  } else if (captchaType === 'datadome') {
+    prepared = normalizeDataDomeSubmit(prepared);
+    validateDataDomeSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -518,6 +713,9 @@ module.exports = {
   FRIENDLY_CAPTCHA_SUBMIT,
   AMAZON_WAF_SUBMIT,
   AMAZON_WAF_SCRIPTS,
+  DATADOME_SUBMIT,
+  DATADOME_CHALLENGE_DOMAIN,
+  DATADOME_CHALLENGE_PATHS,
   CAPY_VERSIONS,
   FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
@@ -537,6 +735,11 @@ module.exports = {
   isAmazonWafScriptUrl,
   normalizeAmazonWafSubmit,
   validateAmazonWafSubmit,
+  htmlUnescape,
+  parseDataDomeCaptchaUrl,
+  isDataDomeUserAgent,
+  normalizeDataDomeSubmit,
+  validateDataDomeSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

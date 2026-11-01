@@ -17,7 +17,7 @@ const {
 const {
   startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
   CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
-  AMAZON_WAF_SOLUTION,
+  AMAZON_WAF_SOLUTION, DATADOME_COOKIE, DATADOME_BROWSER_USER_AGENT, DATADOME_LIST_PROXY,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -363,5 +363,64 @@ test('amazonWaf with an off-AWS script is refused locally', async () => {
   await assert.rejects(() => solver.amazonWaf(WAF_KEY, URL, {
     jsapiScript: 'https://evil.example/jsapi.js',
   }));
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+// -- DataDome ----------------------------------------------------------------
+
+const DD_PAGE = 'https://www.example.com/';
+const DD_CAPTCHA_URL = 'https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAAAAMA7KBvCr0n4cEAG330MA%3D%3D'
+  + '&hash=D013AA612AB2224D03B2318D0F5B19&cid=KzE6_pZBBTHdCdvZkauT9VAshi0wS7~v5_M_MacEtdw8'
+  + '&t=fe&referer=https%3A%2F%2Fwww.example.com%2F&s=45225&e=549255a0289eaf17af60822309ab8db4&dm=cd';
+const DD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/156.0.0.1 Safari/537.36';
+const DD_COOKIE_PAIR = DATADOME_COOKIE.split(';')[0];
+
+test('dataDome without a proxy reports the list proxy', async () => {
+  // No proxy sent: CapSkip solved through its own DataDome list, so the result
+  // names that proxy and the browser's User-Agent.
+  const solver = makeSolver();
+  const r = await solver.dataDome(DD_CAPTCHA_URL, DD_PAGE);
+  assert.strictEqual(r.code, DATADOME_COOKIE);
+  assert.strictEqual(r.cookie, DD_COOKIE_PAIR);
+  assert.strictEqual(r.userAgent, DATADOME_BROWSER_USER_AGENT);
+  assert.strictEqual(r.proxy, DATADOME_LIST_PROXY);
+  assert.ok(r.captchaId);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'datadome');
+  assert.strictEqual(sent.captcha_url, DD_CAPTCHA_URL);
+  assert.strictEqual(sent.pageurl, DD_PAGE);
+  assert.ok(!('proxy' in sent) && !('useragent' in sent));
+});
+
+test('dataDome with its own proxy and User-Agent', async () => {
+  // A proxy sent with the task: no `proxy` comes back, and the User-Agent is
+  // the one sent -- it crossed the wire intact, ~ ; ( ) and all.
+  const solver = makeSolver();
+  const r = await solver.dataDome(DD_CAPTCHA_URL, DD_PAGE, {
+    userAgent: DD_USER_AGENT,
+    proxy: { type: 'HTTP', uri: 'login:p%40ss@203.0.113.7:3128' },
+  });
+  assert.strictEqual(r.cookie, DD_COOKIE_PAIR);
+  assert.strictEqual(r.userAgent, DD_USER_AGENT);
+  assert.ok(!('proxy' in r));
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.useragent, DD_USER_AGENT);
+  assert.strictEqual(sent.proxy, 'login:p%40ss@203.0.113.7:3128');
+  assert.strictEqual(sent.proxytype, 'HTTP');
+});
+
+test('dataDome plain-text answer is the cookie as set', async () => {
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'datadome', captcha_url: DD_CAPTCHA_URL, pageurl: DD_PAGE });
+  assert.strictEqual(await solver.getResult(id), DATADOME_COOKIE);
+});
+
+test('dataDome with a banned block page is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.dataDome(DD_CAPTCHA_URL.replace('t=fe', 't=bv'), DD_PAGE));
   assert.strictEqual(server.submissions.length, sentBefore);
 });

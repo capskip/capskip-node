@@ -83,6 +83,12 @@ function applyPollResult(result, polled) {
     if (userAgent) {
       result.userAgent = userAgent;
     }
+    // DataDome names the proxy a task was solved through when the task sent
+    // none and CapSkip took one from its own DataDome proxy list. The cookie
+    // only works from that address, so it is reported rather than dropped.
+    if (polled.proxy) {
+      result.proxy = polled.proxy;
+    }
     // ALTCHA's createTask-shaped `solution` object. Carried through so
     // applyAltchaSolution can read the counter the server already worked out,
     // which is the only reliable source for a proof-of-work v2 answer; that
@@ -278,6 +284,24 @@ function applyAmazonWafSolution(result) {
 }
 
 /**
+ * Expose the DataDome cookie as `cookie`, ready for a Cookie header.
+ *
+ * `code` keeps the cookie exactly as DataDome set it, attributes included
+ * (`datadome=...; Max-Age=...; Domain=...; Path=/; Secure; SameSite=Lax`),
+ * for a cookie jar. `cookie` is the part before the first semicolon, the
+ * `datadome=...` pair a request sends back. `userAgent` and, when CapSkip
+ * picked the proxy, `proxy` are carried through from the poll as they are.
+ * An answer that is not a string is left untouched.
+ */
+function applyDataDomeSolution(result) {
+  const { code } = result;
+  if (typeof code === 'string' && code) {
+    result.cookie = code.split(';', 1)[0].trim();
+  }
+  return result;
+}
+
+/**
  * Expose a single-token answer as `token`, named for the form field it fills.
  *
  * `code` keeps the raw answer so callers that forward it verbatim keep working;
@@ -326,7 +350,8 @@ function parseSubmitResponse(response) {
 
 /**
  * Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile,
- * GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF).
+ * GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF,
+ * DataDome).
  */
 class CapSkip {
   constructor({
@@ -620,6 +645,61 @@ class CapSkip {
     return applyAmazonWafSolution(result);
   }
 
+  /**
+   * Solve a DataDome challenge and return the `datadome` cookie.
+   *
+   * `captchaUrl` and `url` are required; everything else goes in `options`:
+   *
+   * - `captchaUrl` is the address of the challenge iframe on
+   *   geo.captcha-delivery.com, under /captcha/ (slider) or /interstitial/
+   *   (device check). Take the iframe's src from the block page, or build it
+   *   from the page's `var dd` object as the API docs show.
+   * - `url` is the page that returned the block page.
+   * - `options.userAgent` is the one you will send with the cookie. It must be
+   *   Chrome for Windows with the same major version as the browser CapSkip
+   *   solves with; leave it out and CapSkip uses that browser's own.
+   * - `options.proxy` is the proxy your later requests go through, as a URI
+   *   string or `{ type: 'HTTP', uri: 'login:password@IP:PORT' }`.
+   *
+   * DataDome ties the cookie to the IP address and User-Agent that earned it.
+   * The result carries:
+   *
+   * - `code` -- the cookie exactly as DataDome set it, attributes included;
+   * - `cookie` -- just the `datadome=...` pair, for a Cookie header;
+   * - `userAgent` -- the User-Agent the cookie was earned with. Send it with
+   *   every request that carries the cookie;
+   * - `proxy` -- present only when you sent no proxy and CapSkip solved
+   *   through its own DataDome proxy list: that proxy as `host:port`. The
+   *   cookie works only through it.
+   */
+  async dataDome(captchaUrl, url, options = {}) {
+    // An unset value is dropped rather than sent as undefined, so
+    // `dataDome(undefined, url, { captchaUrl })` reaches the alias without
+    // tripping the conflict check; an empty one is dropped during validation,
+    // since the server reads '' as "not sent".
+    const given = {};
+    const add = (key, value) => {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    };
+    add('captcha_url', captchaUrl);
+    add('url', url);
+    for (const [key, value] of Object.entries(options)) {
+      add(key, value);
+    }
+
+    // A real browser session, slider or device check, so it gets the longer
+    // of the two timeouts unless the caller asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      ...given,
+      method: 'datadome',
+      poll_json: 1,
+    });
+    return applyDataDomeSolution(result);
+  }
+
   async solve(options = {}) {
     const {
       timeout = 0,
@@ -723,6 +803,9 @@ class CapSkip {
     if (method === 'amazon_waf') {
       return prepareSubmitParams(params, 'amazon_waf');
     }
+    if (method === 'datadome') {
+      return prepareSubmitParams(params, 'datadome');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -738,6 +821,7 @@ module.exports = {
   applyAltchaSolution,
   applyCapySolution,
   applyAmazonWafSolution,
+  applyDataDomeSolution,
   expandObjectAnswer,
   applyTokenSolution,
 };

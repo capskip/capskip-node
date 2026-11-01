@@ -28,6 +28,7 @@ method returns a `Promise`.
 | CaptchaFox (widget) | `captchafox()` | `captchafox` |
 | Friendly Captcha (proof-of-work) | `friendlyCaptcha()` | `friendly_captcha` |
 | AWS WAF (challenge page or widget) | `amazonWaf()` | `amazon_waf` |
+| DataDome (slider and device check) | `dataDome()` | `datadome` |
 
 **Proxy** is supported for every method except image captcha. For ALTCHA the
 proxy is used only for the `challengeUrl` fetch; for Capy, only for the
@@ -713,6 +714,138 @@ for, and the puzzle rounds go through AWS on top of that.
 
 ---
 
+## 11. DataDome — `dataDome(captchaUrl, url, { ... })`
+
+DataDome is the bot protection behind many large shops, news sites and
+marketplaces. When it doubts a visitor, the site answers with a block page
+(status 403, sometimes 401) holding a slider or a short device check. CapSkip
+passes that challenge and returns the `datadome` cookie; requests that carry it
+are let through. Public docs: <https://capskip.com/api-docs/#datadome>.
+
+The arguments follow 2Captcha's `datadome(captcha_url, pageurl, userAgent,
+proxy)`, so code written against it ports directly; `userAgent` and `proxy` go
+in the options object and are optional here.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `datadome` |
+| `captcha_url` | string | Yes | Address of the challenge iframe on `geo.captcha-delivery.com` |
+| `pageurl` | string | Yes | Full http or https URL of the page that returned the block page |
+| `userAgent` | string | No | The User-Agent you will send with the cookie: Chrome for Windows, same major version as CapSkip's browser. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | The proxy your later requests go through |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+The SDK also accepts `captchaUrl` / `captchaURL` for `captcha_url`. An optional
+left `undefined`, `null` or `''` is not sent — the server reads an empty value
+as absent. The `captcha_url` is sent exactly as given.
+
+Refused by the SDK before the request is made, as the server would refuse them
+(`ValidationException`):
+
+- a missing `captcha_url` or `pageurl`;
+- a `captcha_url` that is not https on captcha-delivery.com (or a subdomain),
+  under `/captcha/` or `/interstitial/`, carrying `initialCid`, `hash` and
+  `cid` (server: `ERROR_BAD_PARAMETERS`);
+- a `captcha_url` with `t=bv`: the block page bans the address that fetched it,
+  so nothing sent from there can pass (server: `ERROR_PROXY_BANNED`);
+- a `pageurl` that is not http(s), or that points at captcha-delivery.com
+  (server: `ERROR_PAGEURL`);
+- a `userAgent` that is not stock Chrome for Windows: Firefox, Safari, Edge,
+  Opera, macOS, Linux, Android and iOS all fail (server:
+  `ERROR_WRONG_USERAGENT`).
+
+The Chrome **major version** is checked by CapSkip itself, against the browser
+it solves with, and a mismatch comes back as `ApiException('ERROR_WRONG_USERAGENT')`.
+
+### Building the `captchaUrl`
+
+If the block page already contains the challenge iframe, take its `src` as it
+is (an HTML-escaped `&amp;` is fine). Most block pages build it with a script
+from a `var dd={...}` object instead:
+
+```js
+const dd = JSON.parse(html.match(/var dd=(\{[^}]*\})/)[1].replace(/'/g, '"'));
+const path = dd.rt === 'i' ? 'interstitial' : 'captcha';
+const q = new URLSearchParams({ initialCid: dd.cid, hash: dd.hsh, cid: dd.cookie });
+if (dd.t) q.set('t', dd.t);
+q.set('referer', pageUrl);
+q.set('s', String(dd.s));
+for (const k of ['e', 'b']) {
+  if (dd[k]) q.set(k, String(dd[k]));
+}
+q.set('dm', 'cd');
+const captchaUrl = `https://${dd.host || 'geo.captcha-delivery.com'}/${path}/?${q}`;
+```
+
+Each block page is a fresh challenge: submit it soon, and request the page again
+for the next task rather than reusing an old `captchaUrl`.
+
+### The cookie belongs to one IP and one User-Agent
+
+DataDome refuses the cookie from any other address, or with any other
+User-Agent:
+
+- **Solve from the address you will use the cookie from.** Pass the proxy your
+  requests go through; pass none if they come from the machine running CapSkip.
+- **Send the User-Agent you will use, or none.** With none, CapSkip uses its
+  browser's own, and the result names it.
+- **CapSkip's own DataDome proxy list.** The app can hold a list of proxies for
+  DataDome (Settings, Captcha types, DataDome, Configure Proxies). A task sent
+  without a proxy is solved through that list, and the result then carries
+  `proxy`: that proxy as `host:port`, without its login. The cookie only works
+  through it. A proxy sent with the task always takes priority, and then no
+  `proxy` comes back.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the cookie in `request` with
+`userAgent` and, when its list supplied the proxy, `proxy` next to it:
+
+```json
+{
+  "status": 1,
+  "request": "datadome=FAPPpli4...; Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+  "proxy": "203.0.113.10:8080"
+}
+```
+
+(In plain-text mode the same two values arrive in the `X-DataDome-User-Agent`
+and `X-DataDome-Proxy` response headers.) See [Return value](#return-value).
+
+### SDK usage
+
+```js
+// 2Captcha's argument order, with userAgent and proxy as options
+const result = await solver.dataDome(captchaUrl, 'https://www.example.com/', {
+  userAgent,
+  proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+});
+
+// No proxy, no User-Agent: CapSkip's browser, and its proxy list if it has one
+const result = await solver.dataDome(captchaUrl, 'https://www.example.com/');
+
+const headers = {
+  'User-Agent': result.userAgent,
+  Cookie: result.cookie, // "datadome=..."
+};
+if (result.proxy) {
+  // send this request through result.proxy
+}
+```
+
+DataDome may send a replacement `datadome` cookie on later responses; keep the
+newest one, as a browser would. When the block page comes back anyway, build a
+new `captchaUrl` from it and submit a new task.
+
+Uses `recaptchaTimeout`: the challenge is passed in a real browser.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -777,6 +910,21 @@ answer):
 }
 ```
 
+DataDome returns a cookie. `code` keeps it exactly as DataDome set it, for a
+cookie jar; `cookie` is the `datadome=...` pair alone, for a Cookie header.
+`userAgent` is the User-Agent the cookie was earned with, and `proxy` appears
+only when the task sent no proxy and CapSkip used its own DataDome proxy list:
+
+```js
+{
+  captchaId: '12345',
+  code: 'datadome=FAPPpli4...; Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax',
+  cookie: 'datadome=FAPPpli4...',
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36',
+  proxy: '203.0.113.10:8080',
+}
+```
+
 GeeTest additionally expands its answer into `challenge`, `validate`, and
 `seccode` (`code` keeps the raw JSON string):
 
@@ -814,6 +962,7 @@ Convenience aliases mapped before sending to CapSkip:
 | `challengeScript` | `challenge_script` |
 | `captchaScript` | `captcha_script` |
 | `jsapi_script` | `jsapiScript` |
+| `captchaUrl` / `captchaURL` | `captcha_url` |
 | `proxy` object | `proxy` + `proxytype` strings |
 
 ```js

@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-node/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-node/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF and image captchas from Node.js.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome and image captchas from Node.js.**
 
 Official Node.js client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve. TypeScript definitions included.
 
@@ -19,7 +19,7 @@ npm install capskip
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -40,6 +40,7 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | **Friendly Captcha solver** (proof-of-work) | `solver.friendlyCaptcha(sitekey, url, { version })` |
 | **AWS WAF solver** (challenge page) | `solver.amazonWaf(sitekey, url, { iv, context })` |
 | AWS WAF (widget) | `solver.amazonWaf(sitekey, url, { jsapiScript })` |
+| **DataDome solver** (slider and device check) | `solver.dataDome(captchaUrl, url)` |
 
 **hCaptcha and FunCaptcha/Arkose are not supported.** hCaptcha is the one people misidentify most often, since it also puts a `data-sitekey` on the widget — check for `class="h-captcha"` or a `js.hcaptcha.com` script before reaching for `recaptcha()`.
 
@@ -137,7 +138,7 @@ const solver = new CapSkip({
   port: 8080,               // CapSkip port from app settings
   defaultTimeout: 120,      // seconds — image captcha polling timeout
   recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
-                            // Friendly Captcha / AWS WAF polling timeout
+                            // Friendly Captcha / AWS WAF / DataDome polling timeout
                             // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
   pollingInterval: 5,       // max seconds between res.php polls (starts at 0.25s, backs off to this)
 });
@@ -357,6 +358,68 @@ https URL on an `awswaf.com` host. CapSkip posts the solution to the host the
 script names, so anything else is refused before the request is made. See the
 [AWS WAF API docs](https://capskip.com/api-docs/#aws-waf).
 
+### DataDome
+
+DataDome answers a request it doubts with a block page (status 403, sometimes
+401) instead of the site. CapSkip passes the challenge on that page, a slider
+or a device check, and returns the `datadome` cookie that lets your requests
+through. The arguments follow 2Captcha's `datadome(captcha_url, pageurl,
+userAgent, proxy)`, with `userAgent` and `proxy` as optional options.
+
+```js
+const result = await solver.dataDome(
+  'https://geo.captcha-delivery.com/captcha/?initialCid=...&hash=...&cid=...&t=fe&referer=...&s=45225&e=...&dm=cd',
+  'https://www.example.com/', // the page that returned the block page
+  {
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      + '(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36',
+    proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+  },
+);
+
+result.cookie;    // "datadome=..." -- send it as the Cookie header
+result.code;      // the cookie exactly as DataDome set it: Max-Age, Domain, Path...
+result.userAgent; // the User-Agent the cookie was earned with
+result.proxy;     // set only when CapSkip picked the proxy, see below
+```
+
+`captchaUrl` is the address of the challenge iframe on
+`geo.captcha-delivery.com`: `/captcha/` for a slider, `/interstitial/` for a
+device check. Take the iframe's `src` when the block page has one; most build it
+with a script instead, so assemble it from the page's `var dd={...}` object as
+the [API docs](https://capskip.com/api-docs/#datadome) show. Each block page is
+a fresh challenge, so submit it soon and fetch the page again for the next task.
+
+**The cookie belongs to one IP address and one browser.** DataDome refuses it
+from any other address, or with any other User-Agent, so:
+
+- **Send the User-Agent you will use**, or none. It must be Chrome for Windows,
+  with the same major version as the browser CapSkip solves with; anything else
+  (Firefox, Safari, Edge, mobile, macOS) would earn a cookie the site rejects,
+  so it is refused before the request is sent, and a different Chrome major is
+  refused by CapSkip with `ERROR_WRONG_USERAGENT`. Send none and CapSkip uses
+  its own browser's: copy `result.userAgent` into your requests as it is.
+- **Solve from the address you will use the cookie from.** If your requests go
+  out through a proxy, pass that proxy with the task. If they come from the
+  machine running CapSkip, pass none.
+- **When CapSkip picks the proxy, it tells you which.** The CapSkip app has a
+  DataDome proxy list of its own (Settings, Captcha types, DataDome, Configure
+  Proxies). A task sent without a proxy is solved through that list, and the
+  result then carries `proxy` as `host:port`: send the cookie through that
+  proxy, or it will be refused. A proxy you send always takes priority over
+  the list, and then no `proxy` comes back.
+
+```js
+const headers = { 'User-Agent': result.userAgent, Cookie: result.cookie };
+// When result.proxy is set, route this request through it (it is named without
+// its login: add your credentials if it has one), e.g. with undici's ProxyAgent.
+const page = await fetch('https://www.example.com/', { headers });
+```
+
+A block page whose `dd` object carries `'t':'bv'` means DataDome has banned the
+address that fetched it; no solve from there can pass, so it is refused before
+the request is sent. Change the address and request the page again.
+
 ### With a proxy (every method except image captcha)
 
 ```js
@@ -457,7 +520,10 @@ Captcha add `token`, the same string as `code`. Capy expands its answer into
 `captchakey`, `challengekey` and `answer` — it returns an object rather than a
 token, and `code` keeps the raw answer. AWS WAF likewise returns an object,
 expanded into `captcha_voucher` and `existing_token`. ALTCHA adds `token` (the same
-string as `code`) and `number`, the counter that solved it.
+string as `code`) and `number`, the counter that solved it. DataDome adds
+`cookie`, the `datadome=...` pair alone, while `code` keeps the cookie with its
+attributes; it also carries `userAgent`, and `proxy` when CapSkip chose the
+proxy.
 
 ---
 
@@ -502,7 +568,7 @@ const result: SolveResult = await solver.recaptcha('...', 'https://example.com')
 
 ### How do I solve a captcha in Node.js?
 
-Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token, or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token (a cookie for DataDome), or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -510,7 +576,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
 
 ### Does it work with Puppeteer and Playwright?
 

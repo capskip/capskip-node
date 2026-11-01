@@ -20,7 +20,7 @@ export interface CapSkipOptions {
   defaultTimeout?: number;
   /**
    * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
-   * Captcha / AWS WAF before timing out. Default `300`. ALTCHA and Capy use
+   * Captcha / AWS WAF / DataDome before timing out. Default `300`. ALTCHA and Capy use
    * `defaultTimeout` instead — neither is a browser solve.
    */
   recaptchaTimeout?: number;
@@ -37,13 +37,16 @@ export interface SolveResult {
    * this is the raw JSON string CapSkip returns — prefer the parsed
    * `challenge` / `validate` / `seccode` fields below. For ALTCHA it is the
    * base64 token, also exposed as `token`. For Capy and AWS WAF it is the raw
-   * answer object, expanded into the fields below.
+   * answer object, expanded into the fields below. For DataDome it is the
+   * `datadome` cookie exactly as DataDome set it, attributes included.
    */
   code: string | Record<string, unknown>;
   /**
-   * Turnstile and CaptchaFox — the User-Agent to use when submitting the token.
-   * For CaptchaFox this is the browser's own, not one you sent, and it is absent
-   * when the solve captured none rather than guessed.
+   * Turnstile, CaptchaFox and DataDome — the User-Agent to use when submitting
+   * the token. For CaptchaFox this is the browser's own, not one you sent, and
+   * it is absent when the solve captured none rather than guessed. For DataDome
+   * it is the User-Agent the cookie was earned with — the one you sent, or
+   * CapSkip's own browser's — and every request carrying the cookie must send it.
    */
   userAgent?: string;
   /** GeeTest only — the `geetest_challenge` value to post back. */
@@ -82,6 +85,17 @@ export interface SolveResult {
   captcha_voucher?: string;
   /** AWS WAF only — the token the voucher was issued for. Pair with `captcha_voucher`. */
   existing_token?: string;
+  /**
+   * DataDome only — the `datadome=...` pair alone (`code` up to its first
+   * `;`), ready for a `Cookie` header.
+   */
+  cookie?: string;
+  /**
+   * DataDome only — present only when the task sent no proxy and CapSkip solved
+   * through its own DataDome proxy list: that proxy as `host:port`. The cookie
+   * works only through it.
+   */
+  proxy?: string;
 }
 
 /** Extra options for {@link CapSkip.normal}. */
@@ -280,6 +294,36 @@ export interface AmazonWafOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.dataDome}. */
+export interface DataDomeOptions {
+  /**
+   * The User-Agent you will send with the cookie. Must be stock Chrome for
+   * Windows with the same major version as the browser CapSkip solves with.
+   * Leave it out and CapSkip uses its own browser's, reported as `userAgent`.
+   */
+  userAgent?: string;
+  /** Alias for `userAgent`. */
+  useragent?: string;
+  /** The challenge iframe URL (alias for the `captchaUrl` argument). */
+  captcha_url?: string;
+  /** The challenge iframe URL (alias for the `captchaUrl` argument). */
+  captchaUrl?: string;
+  /**
+   * The proxy your later requests go through. Left out, CapSkip solves through
+   * its own DataDome proxy list and the result names that proxy as `proxy`.
+   */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. Default `HTTP`. */
+  proxytype?: string;
+  /** Poll timeout in seconds. Default: the client's `recaptchaTimeout`. */
+  timeout?: number;
+  /** Max seconds between polls for this solve. */
+  polling_interval?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -375,6 +419,22 @@ export class CapSkip {
     sitekey: string,
     url: string,
     options?: AmazonWafOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve a DataDome challenge (slider or device check) and return the
+   * `datadome` cookie.
+   *
+   * `captchaUrl` is the challenge iframe's address on captcha-delivery.com
+   * (`/captcha/` or `/interstitial/`), `url` the page that returned the block
+   * page. The result carries `code` (the cookie as set), `cookie` (the
+   * `datadome=...` pair), `userAgent` (send it with the cookie) and, only when
+   * no proxy was passed and CapSkip used its own DataDome proxy list, `proxy`
+   * — the cookie works only through that address.
+   */
+  dataDome(
+    captchaUrl: string | undefined,
+    url: string,
+    options?: DataDomeOptions,
   ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;

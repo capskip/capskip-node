@@ -1,7 +1,7 @@
 {
   "name": "capskip",
-  "version": "1.4.0",
-  "description": "Captcha solver for Node.js: solve reCAPTCHA v2/v3, Cloudflare Turnstile, GeeTest, AWS WAF and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees.",
+  "version": "1.5.0",
+  "description": "Captcha solver for Node.js: solve reCAPTCHA v2/v3, Cloudflare Turnstile, GeeTest, AWS WAF, DataDome and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees.",
   "main": "src/index.js",
   "types": "types/index.d.ts",
   "exports": {
@@ -41,6 +41,8 @@
     "geetest-solver",
     "aws-waf",
     "aws-waf-captcha",
+    "datadome",
+    "datadome-solver",
     "image-captcha",
     "ocr",
     "2captcha-alternative",

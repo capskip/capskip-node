@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-02
+
+### Added
+
+- **DataDome support** via `dataDome(captchaUrl, url, options)`, sent as
+  `method=datadome`, covering both DataDome challenges: the slider
+  (`/captcha/`) and the device check (`/interstitial/`). The arguments follow
+  2Captcha's `datadome(captcha_url, pageurl, userAgent, proxy)`, with
+  `userAgent` and `proxy` as optional options, as on every other method.
+- The result carries the cookie twice: `code` exactly as DataDome set it,
+  attributes included, and `cookie`, the `datadome=...` pair alone for a Cookie
+  header. `userAgent` is the User-Agent the cookie was earned with, the one sent
+  or CapSkip's own browser's.
+- `proxy` in the result: when a task is sent without a proxy and the CapSkip app
+  solves it through its own DataDome proxy list, the result names that proxy as
+  `host:port`. The cookie only works from that address, so it is reported
+  rather than dropped. Polled results now carry a `proxy` field whenever the
+  server sends one.
+- Parameter aliases `captchaUrl` / `captchaURL` for `captcha_url`.
+- TypeScript definitions for `DataDomeOptions`, plus the new `SolveResult`
+  fields `cookie` and `proxy`.
+- `examples/datadome.js`.
+
+### Notes
+
+- Refused locally, before a round-trip: a `captcha_url` that is not an https
+  challenge address on captcha-delivery.com carrying `initialCid`, `hash` and
+  `cid`; a block page that bans the requesting address (`t=bv`); a `pageurl`
+  that is not http(s), or is on captcha-delivery.com; and a `userAgent` that is
+  not stock Chrome for Windows. CapSkip itself checks that the Chrome major
+  version matches its browser and answers `ERROR_WRONG_USERAGENT` when it does
+  not. An optional passed as `''` is treated as not sent.
+- An iframe `src` copied HTML-escaped (`&amp;`) is accepted, as the server
+  decodes it, and is sent unchanged.
+- DataDome uses `recaptchaTimeout`: the challenge is passed in a real browser.
+
 ## [1.4.0] - 2026-11-01
 
 ### Added

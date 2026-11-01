@@ -53,6 +53,17 @@ const AMAZON_WAF_SOLUTION = {
   existing_token: '7d4c2a91-EXAMPLE-4f0b-9e6d-3a1b5c8e2f70:EQoAeXAMPLEtokenAAAA:Wm9wc2E=',
 };
 
+// DataDome answers with a cookie, not a token: the Set-Cookie value exactly as
+// DataDome set it, attributes included. Next to it CapSkip names the User-Agent
+// the cookie was earned with (the caller's, or its own browser's when the task
+// sent none) and, only when the task sent no proxy and the app's DataDome proxy
+// list supplied one, that proxy as host:port.
+const DATADOME_COOKIE = 'datadome=FAPPpli4jkT1MZGtgF8ez7mjSz8MrJ9fGRNE51Gj79cq9fXp5xn~F1P5APWjqvJojf4U9dq0R81Xaj2hpYtjle95mkg; '
+  + 'Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax';
+const DATADOME_BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
+const DATADOME_LIST_PROXY = '203.0.113.10:8080';
+
 // A minimal valid 1x1 PNG. The mock returns these bytes for /image.png and the
 // SDK never inspects the content, so exact pixels do not matter.
 const PNG = Buffer.from(
@@ -72,6 +83,7 @@ function createMockServer() {
   // actually crossed the wire.
   const submissions = [];
   const idType = {};
+  const idFields = {};
   const pollCount = {};
 
   const handleRes = (res, query) => {
@@ -131,6 +143,20 @@ function createMockServer() {
         }), 'application/json');
       } else {
         send(res, `OK|${JSON.stringify(AMAZON_WAF_SOLUTION)}`);
+      }
+    } else if (idType[cid] === 'datadome') {
+      // As CapSkip answers: the cookie as `request`, the User-Agent it was
+      // earned with, and `proxy` only when the app's own list supplied one.
+      const sent = idFields[cid] || {};
+      const userAgent = sent.userAgent || sent.useragent || DATADOME_BROWSER_USER_AGENT;
+      if (wantJson) {
+        const reply = { status: 1, request: DATADOME_COOKIE, userAgent };
+        if (!sent.proxy) {
+          reply.proxy = DATADOME_LIST_PROXY;
+        }
+        send(res, JSON.stringify(reply), 'application/json');
+      } else {
+        send(res, `OK|${DATADOME_COOKIE}`);
       }
     } else if (idType[cid] === 'captchafox') {
       // The UA is the browser's own, and CapSkip reports it at the top level
@@ -194,6 +220,7 @@ function createMockServer() {
       cid = String(ids);
     }
     idType[cid] = fields.method || '';
+    idFields[cid] = fields;
     // in.php returns JSON when the submit carried json=1, mirroring real CapSkip.
     if (String(fields.json) === '1') {
       send(res, `{"status":1,"request":"${cid}"}`, 'application/json');
@@ -250,6 +277,9 @@ module.exports = {
   CAPTCHAFOX_USER_AGENT,
   FRIENDLY_CAPTCHA_TOKEN,
   AMAZON_WAF_SOLUTION,
+  DATADOME_COOKIE,
+  DATADOME_BROWSER_USER_AGENT,
+  DATADOME_LIST_PROXY,
   PNG,
   createMockServer,
   startMockServer,

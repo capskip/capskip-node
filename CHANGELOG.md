@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-11-05
+
+### Added
+
+- **hCaptcha support** via `hcaptcha(sitekey, url, options)`, sent as
+  `method=hcaptcha`. The arguments follow 2Captcha's `hcaptcha({ sitekey,
+  pageurl, ... })` in this SDK's usual shape; `pageurl` in `options` is accepted
+  in place of `url`. Checkbox, invisible and hCaptcha Enterprise widgets all use
+  this one method.
+- Optional parameters: `invisible` (`1` or `true` for an invisible widget),
+  `data` (the Enterprise `rqdata`), `userAgent` / `useragent`, and `proxy`.
+- The result carries the token as both `code` and `token`, `respKey` (always
+  present, empty when the widget handed out none) and `userAgent`, the
+  User-Agent the token was earned with. Polled results now carry a `respKey`
+  field whenever the server sends one.
+- TypeScript definitions for `HCaptchaOptions` and the `hcaptcha()` method;
+  `SolveResult.respKey` now documents hCaptcha.
+- `examples/hcaptcha.js`.
+
+### Notes
+
+- Refused locally, before a round-trip: a missing or blank sitekey, a page URL
+  that is missing or not an absolute http(s) address, an `invisible` value other
+  than 0/1/true/false, and any parameter the CapSkip hCaptcha API does not take
+  (2Captcha's `domain` among them).
+- `invisible` is sent as `1`, or left out when off, so a boolean never reaches
+  the server as the string `true` or `false`. An optional passed as `''` is
+  treated as not sent.
+- hCaptcha uses `recaptchaTimeout`: the widget is passed in a real browser.
+
 ## [1.5.0] - 2026-11-02
 
 ### Added

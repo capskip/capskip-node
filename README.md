@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-node/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-node/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome and image captchas from Node.js.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha and image captchas from Node.js.**
 
 Official Node.js client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve. TypeScript definitions included.
 
@@ -19,7 +19,7 @@ npm install capskip
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -41,8 +41,9 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | **AWS WAF solver** (challenge page) | `solver.amazonWaf(sitekey, url, { iv, context })` |
 | AWS WAF (widget) | `solver.amazonWaf(sitekey, url, { jsapiScript })` |
 | **DataDome solver** (slider and device check) | `solver.dataDome(captchaUrl, url)` |
+| **hCaptcha solver** (checkbox, invisible and Enterprise) | `solver.hcaptcha(sitekey, url)` |
 
-**hCaptcha and FunCaptcha/Arkose are not supported.** hCaptcha is the one people misidentify most often, since it also puts a `data-sitekey` on the widget — check for `class="h-captcha"` or a `js.hcaptcha.com` script before reaching for `recaptcha()`.
+**FunCaptcha/Arkose is not supported.** hCaptcha and reCAPTCHA both put a `data-sitekey` on the widget, so tell them apart before choosing a method: `class="h-captcha"` or a `js.hcaptcha.com` script means `hcaptcha()`, `class="g-recaptcha"` means `recaptcha()`.
 
 Point the SDK at the [live captcha demo pages](https://capskip.com/captcha-demo/) to sanity-check your setup against real widgets.
 
@@ -138,7 +139,7 @@ const solver = new CapSkip({
   port: 8080,               // CapSkip port from app settings
   defaultTimeout: 120,      // seconds — image captcha polling timeout
   recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
-                            // Friendly Captcha / AWS WAF / DataDome polling timeout
+                            // Friendly Captcha / AWS WAF / DataDome / hCaptcha polling timeout
                             // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
   pollingInterval: 5,       // max seconds between res.php polls (starts at 0.25s, backs off to this)
 });
@@ -420,6 +421,56 @@ A block page whose `dd` object carries `'t':'bv'` means DataDome has banned the
 address that fetched it; no solve from there can pass, so it is refused before
 the request is sent. Change the address and request the page again.
 
+### hCaptcha
+
+hCaptcha is the checkbox widget behind many sign-up, login and checkout forms.
+CapSkip passes the widget for the sitekey and page you send and returns the
+token. The arguments follow 2Captcha's `hcaptcha({ sitekey, pageurl, ... })` in
+this SDK's usual shape, `hcaptcha(sitekey, url, options)`, and invisible and
+Enterprise widgets use the same method.
+
+```js
+const result = await solver.hcaptcha(
+  'a5f74b19-9e45-40e0-b45d-47ff91b7a6c2', // data-sitekey of the widget
+  'https://accounts.hcaptcha.com/demo',   // the page the widget is on
+  {
+    // invisible: 1,                // for a widget with data-size="invisible"
+    // data: '...',                 // hCaptcha Enterprise: the rqdata the page passes to hcaptcha.setData()
+    // userAgent: 'Mozilla/5.0 ...',// the User-Agent you will submit the form with
+    // proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+  },
+);
+
+result.token;     // put it in h-captcha-response (and g-recaptcha-response, if present)
+result.respKey;   // the second value hCaptcha hands the widget; usually empty or unused
+result.userAgent; // the User-Agent the token was earned with
+```
+
+The sitekey is on the widget container as `data-sitekey`, in the `sitekey`
+option of `hcaptcha.render()`, or in the `sitekey=` parameter of the hCaptcha
+iframe's address. An Enterprise `rqdata` value is issued for one challenge and
+expires quickly, so read a fresh one for every task.
+
+Put the token in the form's `h-captcha-response` field (and `g-recaptcha-response`,
+if the form has one), or pass it to the widget's `data-callback`, and submit with
+the User-Agent from the result. Tokens are single use and expire about two
+minutes after they are issued, so submit each one soon.
+
+```js
+await page.evaluate((token) => {
+  document.querySelector('[name="h-captcha-response"]').value = token;
+  const g = document.querySelector('[name="g-recaptcha-response"]');
+  if (g) g.value = token;
+}, result.token);
+```
+
+A `userAgent` you send is used only when it matches the browser CapSkip solves
+with; the result always names the one the token was actually earned with. At
+volume, hCaptcha scores the network a token comes from as well as the browser,
+so send a proxy with each task or configure a pool in the CapSkip app (Settings,
+Captcha types, hCaptcha, Configure Proxies). If a strict site still refuses the
+tokens, turn on High score mode for hCaptcha in the same settings page.
+
 ### With a proxy (every method except image captcha)
 
 ```js
@@ -523,7 +574,8 @@ expanded into `captcha_voucher` and `existing_token`. ALTCHA adds `token` (the s
 string as `code`) and `number`, the counter that solved it. DataDome adds
 `cookie`, the `datadome=...` pair alone, while `code` keeps the cookie with its
 attributes; it also carries `userAgent`, and `proxy` when CapSkip chose the
-proxy.
+proxy. hCaptcha adds `token`, the same string as `code`, `respKey` (always
+present, empty when the widget handed out none) and `userAgent`.
 
 ---
 
@@ -568,7 +620,7 @@ const result: SolveResult = await solver.recaptcha('...', 'https://example.com')
 
 ### How do I solve a captcha in Node.js?
 
-Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token (a cookie for DataDome), or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token (a cookie for DataDome), or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -576,7 +628,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha (including invisible and Enterprise), and image/text captchas. Not FunCaptcha/Arkose.
 
 ### Does it work with Puppeteer and Playwright?
 

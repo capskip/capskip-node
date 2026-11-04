@@ -18,6 +18,7 @@ const {
   startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
   CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
   AMAZON_WAF_SOLUTION, DATADOME_COOKIE, DATADOME_BROWSER_USER_AGENT, DATADOME_LIST_PROXY,
+  HCAPTCHA_TOKEN, HCAPTCHA_RESP_KEY, HCAPTCHA_USER_AGENT,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -422,5 +423,62 @@ test('dataDome with a banned block page is refused locally', async () => {
   const solver = makeSolver();
   const sentBefore = server.submissions.length;
   await assert.rejects(() => solver.dataDome(DD_CAPTCHA_URL.replace('t=fe', 't=bv'), DD_PAGE));
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+// -- hCaptcha ----------------------------------------------------------------
+
+const HC_SITEKEY = 'a5f74b19-9e45-40e0-b45d-47ff91b7a6c2';
+const HC_PAGE = 'https://accounts.hcaptcha.com/demo';
+const HC_RQDATA = 'Wk2qT7bX+fV9rL0pZ3mN8cJ1hYsD6uE4gA5oR2iK/0=';
+
+test('hcaptcha: token, respKey and userAgent', async () => {
+  const solver = makeSolver();
+  const r = await solver.hcaptcha(HC_SITEKEY, HC_PAGE);
+  assert.ok(r.captchaId);
+  assert.strictEqual(r.code, HCAPTCHA_TOKEN);
+  assert.strictEqual(r.token, HCAPTCHA_TOKEN);
+  assert.strictEqual(r.respKey, HCAPTCHA_RESP_KEY);
+  assert.strictEqual(r.userAgent, HCAPTCHA_USER_AGENT);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'hcaptcha');
+  assert.strictEqual(sent.sitekey, HC_SITEKEY);
+  assert.strictEqual(sent.pageurl, HC_PAGE);
+  assert.ok(!('invisible' in sent));
+});
+
+test('hcaptcha with every option', async () => {
+  // invisible: true has to cross the wire as 1: the mock, like CapSkip,
+  // refuses anything else. rqdata carries + and /, which must survive, and the
+  // proxy password's %40 must arrive as written.
+  const solver = makeSolver();
+  const r = await solver.hcaptcha(HC_SITEKEY, HC_PAGE, {
+    invisible: true,
+    data: HC_RQDATA,
+    userAgent: 'Mozilla/5.0 (caller)',
+    proxy: { type: 'SOCKS5H', uri: 'login:p%40ss@203.0.113.7:1080' },
+  });
+  assert.strictEqual(r.token, HCAPTCHA_TOKEN);
+  assert.strictEqual(r.respKey, HCAPTCHA_RESP_KEY);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.invisible, '1');
+  assert.strictEqual(sent.data, HC_RQDATA);
+  assert.strictEqual(sent.useragent, 'Mozilla/5.0 (caller)');
+  assert.strictEqual(sent.proxy, 'login:p%40ss@203.0.113.7:1080');
+  assert.strictEqual(sent.proxytype, 'SOCKS5H');
+});
+
+test('hcaptcha plain-text answer is the token', async () => {
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'hcaptcha', sitekey: HC_SITEKEY, pageurl: HC_PAGE });
+  assert.strictEqual(await solver.getResult(id), HCAPTCHA_TOKEN);
+});
+
+test('hcaptcha with a bad pageurl is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.hcaptcha(HC_SITEKEY, 'accounts.hcaptcha.com/demo'));
   assert.strictEqual(server.submissions.length, sentBefore);
 });

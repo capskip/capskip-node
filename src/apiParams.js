@@ -59,6 +59,18 @@ const AMAZON_WAF_SCRIPTS = ['challenge_script', 'captcha_script', 'jsapiScript']
 // the three AWS WAF script files.
 const AMAZON_WAF_SCRIPT_PATH = /^(\/[A-Za-z0-9_-]+)+\/(challenge|captcha|jsapi)\.js$/;
 
+const HCAPTCHA_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'invisible', 'data', 'useragent', 'json',
+  'proxy', 'proxytype',
+]);
+
+// What the server reads as "invisible widget" ("1" or "true") and as its
+// default. Strings are matched case-insensitively. A boolean would otherwise
+// reach the form body as 'true' or 'false', and the server reads 'false' as
+// neither, so every accepted form is normalized to the 1 the server reads.
+const HCAPTCHA_INVISIBLE_ON = [true, 1, '1', 'true'];
+const HCAPTCHA_INVISIBLE_OFF = [false, 0, '0', 'false'];
+
 const DATADOME_SUBMIT = new Set([
   'method', 'captcha_url', 'pageurl', 'useragent', 'json', 'proxy', 'proxytype',
 ]);
@@ -648,6 +660,75 @@ function validateDataDomeSubmit(params) {
   }
 }
 
+/**
+ * Drop unset and empty optionals, and send `invisible` as the 1 the server
+ * reads. `invisible: 0` is the server's default, so it is not sent at all.
+ */
+function normalizeHCaptchaSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  if (has(out, 'invisible')) {
+    const raw = out.invisible;
+    const key = typeof raw === 'string' ? raw.toLowerCase() : raw;
+    if (HCAPTCHA_INVISIBLE_ON.includes(key)) {
+      out.invisible = 1;
+    } else if (HCAPTCHA_INVISIBLE_OFF.includes(key)) {
+      delete out.invisible;
+    } else {
+      const shown = typeof raw === 'string' ? `'${raw}'` : String(raw);
+      throw new ValidationException(
+        `invisible must be 0 or 1 (or a boolean) for hCaptcha, not ${shown}.`,
+      );
+    }
+  }
+  return out;
+}
+
+/** An absolute http(s) URL with a host. */
+function isHttpUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (error) {
+    return false;
+  }
+  return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+    && parsed.hostname !== '';
+}
+
+function validateHCaptchaSubmit(params) {
+  // The server answers ERROR_RECAPTCHA_INVALID_SITEKEY for a missing sitekey
+  // and ERROR_PAGEURL for a page URL that is missing or not http(s). Fail
+  // locally so neither costs a round-trip.
+  const sitekey = params.sitekey;
+  if (sitekey === undefined || sitekey === null || !String(sitekey).trim()) {
+    throw new ValidationException("'sitekey' is required for hCaptcha.");
+  }
+  const rawPageurl = params.pageurl;
+  const pageurl = rawPageurl === undefined || rawPageurl === null
+    ? ''
+    : String(rawPageurl).trim();
+  if (!pageurl) {
+    throw new ValidationException("'pageurl' is required for hCaptcha.");
+  }
+  if (!isHttpUrl(pageurl)) {
+    throw new ValidationException(
+      `pageurl must be an absolute http or https URL for hCaptcha, not '${pageurl}'.`,
+    );
+  }
+
+  const unknown = unknownKeys(params, HCAPTCHA_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for hCaptcha: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -691,6 +772,9 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'datadome') {
     prepared = normalizeDataDomeSubmit(prepared);
     validateDataDomeSubmit(prepared);
+  } else if (captchaType === 'hcaptcha') {
+    prepared = normalizeHCaptchaSubmit(prepared);
+    validateHCaptchaSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -716,6 +800,7 @@ module.exports = {
   DATADOME_SUBMIT,
   DATADOME_CHALLENGE_DOMAIN,
   DATADOME_CHALLENGE_PATHS,
+  HCAPTCHA_SUBMIT,
   CAPY_VERSIONS,
   FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
@@ -740,6 +825,8 @@ module.exports = {
   isDataDomeUserAgent,
   normalizeDataDomeSubmit,
   validateDataDomeSubmit,
+  normalizeHCaptchaSubmit,
+  validateHCaptchaSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

@@ -29,6 +29,7 @@ method returns a `Promise`.
 | Friendly Captcha (proof-of-work) | `friendlyCaptcha()` | `friendly_captcha` |
 | AWS WAF (challenge page or widget) | `amazonWaf()` | `amazon_waf` |
 | DataDome (slider and device check) | `dataDome()` | `datadome` |
+| hCaptcha (checkbox, invisible, Enterprise) | `hcaptcha()` | `hcaptcha` |
 
 **Proxy** is supported for every method except image captcha. For ALTCHA the
 proxy is used only for the `challengeUrl` fetch; for Capy, only for the
@@ -846,6 +847,85 @@ Uses `recaptchaTimeout`: the challenge is passed in a real browser.
 
 ---
 
+## 12. hCaptcha — `hcaptcha(sitekey, url, { ... })`
+
+hCaptcha is the checkbox widget behind many sign-up, login and checkout forms.
+CapSkip passes the widget for the sitekey and page you send and returns the
+token, ready to submit with the form. Invisible widgets and hCaptcha Enterprise
+use the same method. Public docs: <https://capskip.com/api-docs/#hcaptcha>.
+
+The arguments follow 2Captcha's `hcaptcha({ sitekey, pageurl, ... })` in this
+SDK's usual shape, so code written against it ports directly. `pageurl` in the
+options object is accepted in place of `url`.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `hcaptcha` |
+| `sitekey` | string | Yes | The widget's sitekey (`data-sitekey`) |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `invisible` | int | No | `1` for an invisible widget (`data-size="invisible"`). The SDK takes `1`/`0`, `true`/`false` or `'1'`/`'0'`/`'true'`/`'false'`, sends `1`, and leaves it out when off |
+| `data` | string | No | hCaptcha Enterprise: the `rqdata` value the page passes to `hcaptcha.setData()`. Single use; fetch a fresh one per task |
+| `userAgent` | string | No | The User-Agent you will submit the form with. Used only when it matches CapSkip's browser. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+An optional left `undefined`, `null` or `''` is not sent.
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing or blank sitekey (`ERROR_RECAPTCHA_INVALID_SITEKEY`), a `pageurl` that
+is missing or not an absolute http(s) address (`ERROR_PAGEURL`), an `invisible`
+value other than 0/1/true/false, and any parameter not in the table, 2Captcha's
+`domain` among them.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the token in `request` with
+`respKey` and the User-Agent the token was earned with:
+
+```json
+{
+  "status": 1,
+  "request": "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.hadwYXNza2V5xQZ2...f3Kq8nV2",
+  "respKey": "E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA0...9wB1",
+  "useragent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+}
+```
+
+(In plain-text mode the User-Agent arrives in the `X-HCaptcha-User-Agent`
+response header.) A task that hCaptcha refused the sitekey for fails with
+`ERROR_RECAPTCHA_INVALID_SITEKEY`, one whose proxy could not be reached with
+`ERROR_PROXY_CONNECT_REFUSED`; resubmitting the same task would fail again.
+
+### SDK usage
+
+```js
+const result = await solver.hcaptcha(
+  'a5f74b19-9e45-40e0-b45d-47ff91b7a6c2',
+  'https://accounts.hcaptcha.com/demo',
+);
+
+// Invisible Enterprise widget, through a proxy
+const result = await solver.hcaptcha(sitekey, pageUrl, {
+  invisible: 1,
+  data: rqdata,
+  proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+});
+
+form['h-captcha-response'] = result.token;
+form['g-recaptcha-response'] = result.token; // if the form has one
+headers['User-Agent'] = result.userAgent;
+```
+
+Tokens are single use and expire about two minutes after they are issued.
+
+Uses `recaptchaTimeout`: the widget is passed in a real browser.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -922,6 +1002,20 @@ only when the task sent no proxy and CapSkip used its own DataDome proxy list:
   cookie: 'datadome=FAPPpli4...',
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36',
   proxy: '203.0.113.10:8080',
+}
+```
+
+hCaptcha exposes `token`, the same string as `code`, plus `respKey` and the
+User-Agent the token was earned with. `respKey` is always present, and empty
+when the widget handed out none:
+
+```js
+{
+  captchaId: '12345',
+  code: 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9…',
+  token: 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9…',
+  respKey: 'E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9…',
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) …',
 }
 ```
 

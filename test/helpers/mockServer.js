@@ -64,6 +64,14 @@ const DATADOME_BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) A
   + '(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
 const DATADOME_LIST_PROXY = '203.0.113.10:8080';
 
+// hCaptcha, as CapSkip's res.php answers it with json=1: the token as
+// `request`, the widget's respKey, and the UA of the browser that earned it --
+// never the caller's own, so a test can tell the two apart.
+const HCAPTCHA_TOKEN = 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.hadwYXNza2V5xQZ2f3Kq8nV2';
+const HCAPTCHA_RESP_KEY = 'E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA09wB1';
+const HCAPTCHA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
+
 // A minimal valid 1x1 PNG. The mock returns these bytes for /image.png and the
 // SDK never inspects the content, so exact pixels do not matter.
 const PNG = Buffer.from(
@@ -158,6 +166,18 @@ function createMockServer() {
       } else {
         send(res, `OK|${DATADOME_COOKIE}`);
       }
+    } else if (idType[cid] === 'hcaptcha') {
+      // Plain text carries the UA in X-HCaptcha-User-Agent instead.
+      if (wantJson) {
+        send(res, JSON.stringify({
+          status: 1,
+          request: HCAPTCHA_TOKEN,
+          respKey: HCAPTCHA_RESP_KEY,
+          useragent: HCAPTCHA_USER_AGENT,
+        }), 'application/json');
+      } else {
+        send(res, `OK|${HCAPTCHA_TOKEN}`);
+      }
     } else if (idType[cid] === 'captchafox') {
       // The UA is the browser's own, and CapSkip reports it at the top level
       // and inside solution both.
@@ -203,6 +223,15 @@ function createMockServer() {
 
     if (key === 'badkey') {
       send(res, 'ERROR_WRONG_USER_KEY');
+      return;
+    }
+
+    // CapSkip reads hCaptcha's invisible as "1" or "true" only; a boolean
+    // stringified to 'false' (or anything else) would silently mean
+    // "visible". The mock refuses it so the integration test catches the slip.
+    if (fields.method === 'hcaptcha' && fields.invisible !== undefined
+        && fields.invisible !== '1' && fields.invisible !== 'true') {
+      send(res, 'ERROR_BAD_PARAMETERS');
       return;
     }
 
@@ -280,6 +309,9 @@ module.exports = {
   DATADOME_COOKIE,
   DATADOME_BROWSER_USER_AGENT,
   DATADOME_LIST_PROXY,
+  HCAPTCHA_TOKEN,
+  HCAPTCHA_RESP_KEY,
+  HCAPTCHA_USER_AGENT,
   PNG,
   createMockServer,
   startMockServer,

@@ -20,7 +20,7 @@ export interface CapSkipOptions {
   defaultTimeout?: number;
   /**
    * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
-   * Captcha / AWS WAF / DataDome before timing out. Default `300`. ALTCHA and Capy use
+   * Captcha / AWS WAF / DataDome / hCaptcha before timing out. Default `300`. ALTCHA and Capy use
    * `defaultTimeout` instead — neither is a browser solve.
    */
   recaptchaTimeout?: number;
@@ -42,9 +42,9 @@ export interface SolveResult {
    */
   code: string | Record<string, unknown>;
   /**
-   * Turnstile, CaptchaFox and DataDome — the User-Agent to use when submitting
-   * the token. For CaptchaFox this is the browser's own, not one you sent, and
-   * it is absent when the solve captured none rather than guessed. For DataDome
+   * Turnstile, CaptchaFox, hCaptcha and DataDome — the User-Agent to use when
+   * submitting the token. For CaptchaFox and hCaptcha this is the browser's own,
+   * not one you sent, and it is absent when the solve reported none. For DataDome
    * it is the User-Agent the cookie was earned with — the one you sent, or
    * CapSkip's own browser's — and every request carrying the cookie must send it.
    */
@@ -72,7 +72,12 @@ export interface SolveResult {
    */
   answer?: string;
   /**
-   * Capy only — empty for a puzzle solve. Present for shape compatibility with
+   * hCaptcha — the second value hCaptcha hands the widget next to the token.
+   * Always present on an `hcaptcha()` result, `''` when the widget handed out
+   * none; most sites never read it. Other polled results carry it only when
+   * the server sent one.
+   *
+   * Capy — empty for a puzzle solve. Present for shape compatibility with
    * 2Captcha's documented response; it carries nothing.
    */
   respKey?: string;
@@ -324,6 +329,43 @@ export interface DataDomeOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.hcaptcha}. */
+export interface HCaptchaOptions {
+  /** The page URL (alias for the `url` argument). */
+  pageurl?: string;
+  /** The page URL (alias for the `url` argument). */
+  url?: string;
+  /**
+   * `1` / `true` for a `data-size="invisible"` widget; `0` / `false` (the
+   * default) is not sent. The strings `"1"`, `"0"`, `"true"` and `"false"`
+   * are accepted too; anything else is refused.
+   */
+  invisible?: boolean | 0 | 1 | '0' | '1' | 'true' | 'false';
+  /**
+   * hCaptcha Enterprise `rqdata`, the value the site passes to
+   * `hcaptcha.setData()`. Single use and short-lived: fetch a fresh one per task.
+   */
+  data?: string;
+  /**
+   * The User-Agent you will submit the form with. CapSkip uses it only when it
+   * matches the browser it solves with.
+   */
+  userAgent?: string;
+  /** Alias for `userAgent`. */
+  useragent?: string;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string. Default `HTTP`. */
+  proxytype?: string;
+  /** Poll timeout in seconds. Default: the client's `recaptchaTimeout`. */
+  timeout?: number;
+  /** Max seconds between polls for this solve. */
+  polling_interval?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -435,6 +477,22 @@ export class CapSkip {
     captchaUrl: string | undefined,
     url: string,
     options?: DataDomeOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve an hCaptcha widget (checkbox, invisible or Enterprise) and return
+   * its token.
+   *
+   * `sitekey` is the widget's `data-sitekey`, `url` the page it is on
+   * (`options.pageurl` is accepted in its place). The result carries the token
+   * as `code` and `token` (for `h-captcha-response` and
+   * `g-recaptcha-response`), `respKey` (always present, `''` when none) and
+   * `userAgent`, the User-Agent the token was earned with. Tokens are single
+   * use and expire about two minutes after they are issued.
+   */
+  hcaptcha(
+    sitekey: string,
+    url: string | undefined,
+    options?: HCaptchaOptions,
   ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;

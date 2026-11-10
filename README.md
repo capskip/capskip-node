@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-node/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-node/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha and image captchas from Node.js.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha, MTCaptcha and image captchas from Node.js.**
 
 Official Node.js client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve. TypeScript definitions included.
 
@@ -19,7 +19,7 @@ npm install capskip
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `normal()`, `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()`, `mtcaptcha()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -42,6 +42,7 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | AWS WAF (widget) | `solver.amazonWaf(sitekey, url, { jsapiScript })` |
 | **DataDome solver** (slider and device check) | `solver.dataDome(captchaUrl, url)` |
 | **hCaptcha solver** (checkbox, invisible and Enterprise) | `solver.hcaptcha(sitekey, url)` |
+| **MTCaptcha solver** (text captcha) | `solver.mtcaptcha(sitekey, url)` |
 
 **FunCaptcha/Arkose is not supported.** hCaptcha and reCAPTCHA both put a `data-sitekey` on the widget, so tell them apart before choosing a method: `class="h-captcha"` or a `js.hcaptcha.com` script means `hcaptcha()`, `class="g-recaptcha"` means `recaptcha()`.
 
@@ -53,7 +54,7 @@ Point the SDK at the [live captcha demo pages](https://capskip.com/captcha-demo/
 
 ### 1. Install the CapSkip captcha solver
 
-Download and run the CapSkip desktop app — [CapSkipInstaller.msi](https://capskip.com/download/CapSkipInstaller.msi). Leave it running in the background.
+Download and run the CapSkip desktop app from the [download page](https://capskip.com/download-capskip/). Leave it running in the background.
 
 In CapSkip settings, note:
 
@@ -137,10 +138,10 @@ const solver = new CapSkip({
   apiKey: 'capskip',        // your CapSkip API key (or any string if validation is off)
   host: '127.0.0.1',        // CapSkip host
   port: 8080,               // CapSkip port from app settings
-  defaultTimeout: 120,      // seconds — image captcha polling timeout
+  defaultTimeout: 120,      // seconds — image captcha, ALTCHA, Capy and MTCaptcha polling timeout
   recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
                             // Friendly Captcha / AWS WAF / DataDome / hCaptcha polling timeout
-                            // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
+                            // (ALTCHA, Capy and MTCaptcha use defaultTimeout — none is a browser solve)
   pollingInterval: 5,       // max seconds between res.php polls (starts at 0.25s, backs off to this)
 });
 ```
@@ -471,6 +472,45 @@ so send a proxy with each task or configure a pool in the CapSkip app (Settings,
 Captcha types, hCaptcha, Configure Proxies). If a strict site still refuses the
 tokens, turn on High score mode for hCaptcha in the same settings page.
 
+### MTCaptcha
+
+MTCaptcha is a text captcha used on login, sign-up and contact forms: the
+visitor types the distorted characters in a picture and the widget puts a
+verified token into the form. CapSkip takes the sitekey and page address and
+returns that token. The arguments follow 2Captcha's
+`mtcaptcha(sitekey, url, options)`.
+
+```js
+const result = await solver.mtcaptcha(
+  'MTPublic-KzqLY1cKH',                    // from the page's mtcaptchaConfig
+  'https://2captcha.com/demo/mtcaptcha',   // the page the widget is on
+  {
+    // action: 'login',             // the action mtcaptchaConfig sets, if it sets one
+    // userAgent: 'Mozilla/5.0 ...',// the User-Agent to present to MTCaptcha
+    // proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+  },
+);
+
+result.token;     // v1(...) -- put it in the mtcaptcha-verifiedtoken field
+```
+
+The sitekey starts with `MTPublic-`. Most pages set it in a `mtcaptchaConfig`
+object in the page source; when the widget is on screen it is also the `sitekey`
+query parameter of its iframe on `service.mtcaptcha.com`. A key copied from the
+widget's own `getchallenge` request as `sk=MTPublic-...` is accepted too.
+MTCaptcha issues tokens only for the domains the sitekey is registered for, so
+send the real page address.
+
+```js
+await page.$eval('[name="mtcaptcha-verifiedtoken"]',
+  (el, token) => { el.value = token; }, result.token);
+```
+
+No browser runs for this solve, so it uses `defaultTimeout`. Every solve asks
+MTCaptcha's service for fresh challenges, so at volume configure a proxy pool in
+the CapSkip app (Settings, Captcha types, MTCaptcha, Configure Proxies) or send a
+proxy with each task.
+
 ### With a proxy (every method except image captcha)
 
 ```js
@@ -576,6 +616,7 @@ string as `code`) and `number`, the counter that solved it. DataDome adds
 attributes; it also carries `userAgent`, and `proxy` when CapSkip chose the
 proxy. hCaptcha adds `token`, the same string as `code`, `respKey` (always
 present, empty when the widget handed out none) and `userAgent`.
+MTCaptcha adds `token`, the same string as `code`.
 
 ---
 
@@ -620,7 +661,7 @@ const result: SolveResult = await solver.recaptcha('...', 'https://example.com')
 
 ### How do I solve a captcha in Node.js?
 
-Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token (a cookie for DataDome), or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `npm install capskip`, then call the method that matches the widget — `recaptcha()`, `turnstile()`, `geetest()`, `altcha()`, `capy()`, `captchafox()`, `friendlyCaptcha()`, `amazonWaf()`, `dataDome()`, `hcaptcha()`, `mtcaptcha()` or `normal()`. Each returns a Promise that resolves once CapSkip has an answer, giving you a token (a cookie for DataDome), or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -628,7 +669,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha (including invisible and Enterprise), and image/text captchas. Not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha (including invisible and Enterprise), MTCaptcha, and image/text captchas. Not FunCaptcha/Arkose.
 
 ### Does it work with Puppeteer and Playwright?
 
@@ -667,7 +708,7 @@ The test suite uses Node's built-in test runner — no extra dependencies. See [
 
 ## Links
 
-- [CapSkip — local captcha solver](https://capskip.com) · [download the app](https://capskip.com/download/CapSkipInstaller.msi)
+- [CapSkip — local captcha solver](https://capskip.com) · [download the app](https://capskip.com/download-capskip/)
 - [Captcha demo pages](https://capskip.com/captcha-demo/) — live reCAPTCHA, Turnstile, GeeTest and image widgets
 - [Node.js captcha solver guide](https://capskip.com/nodejs-captcha-solver/)
 - [HTTP API docs](https://capskip.com/api-docs/)

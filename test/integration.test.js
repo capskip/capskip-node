@@ -12,13 +12,13 @@ const path = require('path');
 
 const {
   CapSkip, ApiClient,
-  ApiException, NetworkException, TimeoutException,
+  ApiException, NetworkException, TimeoutException, ValidationException,
 } = require('../src');
 const {
   startMockServer, CODE, USER_AGENT, PNG, ALTCHA_TOKEN, ALTCHA_NUMBER,
   CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
   AMAZON_WAF_SOLUTION, DATADOME_COOKIE, DATADOME_BROWSER_USER_AGENT, DATADOME_LIST_PROXY,
-  HCAPTCHA_TOKEN, HCAPTCHA_RESP_KEY, HCAPTCHA_USER_AGENT,
+  HCAPTCHA_TOKEN, HCAPTCHA_RESP_KEY, HCAPTCHA_USER_AGENT, MTCAPTCHA_TOKEN,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -480,5 +480,66 @@ test('hcaptcha with a bad pageurl is refused locally', async () => {
   const solver = makeSolver();
   const sentBefore = server.submissions.length;
   await assert.rejects(() => solver.hcaptcha(HC_SITEKEY, 'accounts.hcaptcha.com/demo'));
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+// -- MTCaptcha ---------------------------------------------------------------
+
+const MT_SITEKEY = 'MTPublic-KzqLY1cKH';
+const MT_PAGE = 'https://2captcha.com/demo/mtcaptcha';
+
+test('mtcaptcha: token as code and token', async () => {
+  const solver = makeSolver();
+  const r = await solver.mtcaptcha(MT_SITEKEY, MT_PAGE);
+  assert.ok(r.captchaId);
+  assert.strictEqual(r.code, MTCAPTCHA_TOKEN);
+  assert.strictEqual(r.token, MTCAPTCHA_TOKEN);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'mt_captcha');
+  assert.strictEqual(sent.sitekey, MT_SITEKEY);
+  assert.strictEqual(sent.pageurl, MT_PAGE);
+});
+
+test('mtcaptcha with every option', async () => {
+  // The sk= prefix must be gone by the time it reaches the server, which (like
+  // the mock) refuses any key that is not MTPublic-...; the proxy password's
+  // %40 must arrive as written.
+  const solver = makeSolver();
+  const r = await solver.mtcaptcha(`sk=${MT_SITEKEY}`, MT_PAGE, {
+    action: 'login',
+    userAgent: 'Mozilla/5.0 (caller)',
+    proxy: { type: 'SOCKS5H', uri: 'login:p%40ss@203.0.113.7:1080' },
+  });
+  assert.strictEqual(r.token, MTCAPTCHA_TOKEN);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.sitekey, MT_SITEKEY);
+  assert.strictEqual(sent.action, 'login');
+  assert.strictEqual(sent.useragent, 'Mozilla/5.0 (caller)');
+  assert.strictEqual(sent.proxy, 'login:p%40ss@203.0.113.7:1080');
+  assert.strictEqual(sent.proxytype, 'SOCKS5H');
+});
+
+test('mtcaptcha plain-text answer is the token', async () => {
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'mt_captcha', sitekey: MT_SITEKEY, pageurl: MT_PAGE });
+  assert.strictEqual(await solver.getResult(id), MTCAPTCHA_TOKEN);
+});
+
+test('mtcaptcha with a bad sitekey is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.mtcaptcha('KzqLY1cKH', MT_PAGE), ValidationException);
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('mtcaptcha with a SOCKS4 proxy is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(
+    () => solver.mtcaptcha(MT_SITEKEY, MT_PAGE, { proxy: { type: 'SOCKS4', uri: '203.0.113.7:1080' } }),
+    ValidationException,
+  );
   assert.strictEqual(server.submissions.length, sentBefore);
 });

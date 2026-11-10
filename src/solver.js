@@ -370,7 +370,7 @@ function parseSubmitResponse(response) {
 /**
  * Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile,
  * GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF,
- * DataDome, hCaptcha).
+ * DataDome, hCaptcha, MTCaptcha).
  */
 class CapSkip {
   constructor({
@@ -774,6 +774,53 @@ class CapSkip {
     return applyHCaptchaSolution(result);
   }
 
+  /**
+   * Solve an MTCaptcha text captcha and return its token.
+   *
+   * The arguments follow 2Captcha's `mtcaptcha(sitekey, url, options)`:
+   *
+   * - `sitekey` is the widget's sitekey, `MTPublic-` followed by letters,
+   *   digits, `-` or `_`. It is in the page's `mtcaptchaConfig` object, or in
+   *   the `sitekey` query parameter of the widget's iframe. A key copied from
+   *   the widget's `getchallenge` request as `sk=MTPublic-...` is accepted.
+   * - `url` is the full address of the page the widget is on. MTCaptcha issues
+   *   tokens only for the domains the sitekey is registered for. `pageurl` in
+   *   `options` is accepted in its place.
+   * - `options.action` is the `action` the page sets in `mtcaptchaConfig`, if
+   *   any.
+   * - `options.userAgent` is the User-Agent to present to MTCaptcha.
+   * - `options.proxy` is a URI string or
+   *   `{ type: 'HTTP', uri: 'login:password@IP:PORT' }`.
+   *
+   * The result carries the token, `v1(...)`, as both `code` and `token`, for
+   * the form's `mtcaptcha-verifiedtoken` field.
+   */
+  async mtcaptcha(sitekey, url, options = {}) {
+    // An unset value is dropped rather than sent as undefined, so
+    // `mtcaptcha(sitekey, undefined, { pageurl })` reaches the alias without
+    // tripping the conflict check; an empty one is dropped during validation.
+    const given = {};
+    const add = (key, value) => {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    };
+    add('sitekey', sitekey);
+    add('url', url);
+    for (const [key, value] of Object.entries(options)) {
+      add(key, value);
+    }
+
+    // No browser: CapSkip fetches the challenge and reads the text itself, so
+    // it keeps the default timeout like ALTCHA and Capy.
+    const result = await this.solve({
+      ...given,
+      method: 'mt_captcha',
+      poll_json: 1,
+    });
+    return applyTokenSolution(result);
+  }
+
   async solve(options = {}) {
     const {
       timeout = 0,
@@ -882,6 +929,9 @@ class CapSkip {
     }
     if (method === 'hcaptcha') {
       return prepareSubmitParams(params, 'hcaptcha');
+    }
+    if (method === 'mt_captcha' || method === 'mtcaptcha') {
+      return prepareSubmitParams(params, 'mtcaptcha');
     }
     return applyProxy(applyParamAliases(params));
   }

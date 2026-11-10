@@ -16,12 +16,15 @@ export interface CapSkipOptions {
   host?: string;
   /** CapSkip port. Default `8080`. */
   port?: number;
-  /** Seconds to poll an image captcha before timing out. Default `120`. */
+  /**
+   * Seconds to poll an image captcha, ALTCHA, Capy or MTCaptcha before timing
+   * out. Default `120`.
+   */
   defaultTimeout?: number;
   /**
    * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
-   * Captcha / AWS WAF / DataDome / hCaptcha before timing out. Default `300`. ALTCHA and Capy use
-   * `defaultTimeout` instead — neither is a browser solve.
+   * Captcha / AWS WAF / DataDome / hCaptcha before timing out. Default `300`. ALTCHA, Capy and
+   * MTCaptcha use `defaultTimeout` instead — none is a browser solve.
    */
   recaptchaTimeout?: number;
   /** Max seconds between polls; starts at `0.25` and backs off to this. Default `5`. */
@@ -56,8 +59,12 @@ export interface SolveResult {
   /** GeeTest only — the `geetest_seccode` value to post back. */
   seccode?: string;
   /**
-   * ALTCHA only — the base64 payload to post back in the site's `altcha` form
+   * ALTCHA — the base64 payload to post back in the site's `altcha` form
    * field. The same string as `code`, named for where it goes.
+   *
+   * MTCaptcha — the `v1(...)` token for the form's `mtcaptcha-verifiedtoken`
+   * field, the same string as `code`. CaptchaFox, Friendly Captcha and
+   * hCaptcha set it the same way.
    */
   token?: string;
   /** ALTCHA only — the counter that solved the challenge. */
@@ -366,6 +373,31 @@ export interface HCaptchaOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.mtcaptcha}. */
+export interface MtCaptchaOptions {
+  /** The page URL (alias for the `url` argument). */
+  pageurl?: string;
+  /** The page URL (alias for the `url` argument). */
+  url?: string;
+  /** The `action` the page sets in its `mtcaptchaConfig` object, if any. */
+  action?: string;
+  /** The User-Agent to present to MTCaptcha. Sent as `useragent`. */
+  userAgent?: string;
+  /** Alias for `userAgent`. */
+  useragent?: string;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string: HTTP (default), HTTPS, SOCKS5 or SOCKS5H. */
+  proxytype?: string;
+  /** Poll timeout in seconds. Default: the client's `defaultTimeout`. */
+  timeout?: number;
+  /** Max seconds between polls for this solve. */
+  polling_interval?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -493,6 +525,20 @@ export class CapSkip {
     sitekey: string,
     url: string | undefined,
     options?: HCaptchaOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve an MTCaptcha text captcha and return its token.
+   *
+   * `sitekey` is the widget's `MTPublic-...` key (from the page's
+   * `mtcaptchaConfig`; an `sk=` prefix is stripped), `url` the page it is on
+   * (`options.pageurl` is accepted in its place). The result carries the
+   * token, `v1(...)`, as both `code` and `token`, for the form's
+   * `mtcaptcha-verifiedtoken` field. Uses `defaultTimeout`.
+   */
+  mtcaptcha(
+    sitekey: string,
+    url: string | undefined,
+    options?: MtCaptchaOptions,
   ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;

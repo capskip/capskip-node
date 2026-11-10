@@ -71,6 +71,15 @@ const HCAPTCHA_SUBMIT = new Set([
 const HCAPTCHA_INVISIBLE_ON = [true, 1, '1', 'true'];
 const HCAPTCHA_INVISIBLE_OFF = [false, 0, '0', 'false'];
 
+const MTCAPTCHA_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'action', 'useragent', 'json',
+  'proxy', 'proxytype',
+]);
+
+// The server's sitekey test: MTPublic- then 1-55 letters, digits, '-' or '_'
+// (64 characters at most). Anything else is answered ERROR_BAD_PARAMETERS.
+const MTCAPTCHA_SITEKEY = /^MTPublic-[A-Za-z0-9_-]{1,55}$/;
+
 const DATADOME_SUBMIT = new Set([
   'method', 'captcha_url', 'pageurl', 'useragent', 'json', 'proxy', 'proxytype',
 ]);
@@ -729,6 +738,64 @@ function validateHCaptchaSubmit(params) {
   }
 }
 
+/**
+ * Drop unset and empty optionals, and strip the sitekey down to the key the
+ * server tests: surrounding whitespace and an `sk=` prefix go.
+ */
+function normalizeMtCaptchaSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  if (typeof out.sitekey === 'string') {
+    let sitekey = out.sitekey.trim();
+    // MTCaptcha's own getchallenge query names the key `sk=MTPublic-...`, and
+    // callers copy it from there; the server strips that prefix too.
+    if (sitekey.slice(0, 3).toLowerCase() === 'sk=') {
+      sitekey = sitekey.slice(3).trim();
+    }
+    out.sitekey = sitekey;
+  }
+  return out;
+}
+
+function validateMtCaptchaSubmit(params) {
+  // The server answers ERROR_BAD_PARAMETERS for a missing or malformed sitekey
+  // and ERROR_PAGEURL for a page URL that is missing or not http(s). Fail
+  // locally so neither costs a round-trip.
+  const { sitekey } = params;
+  if (sitekey === undefined || sitekey === null || sitekey === '') {
+    throw new ValidationException("'sitekey' is required for MTCaptcha.");
+  }
+  if (typeof sitekey !== 'string' || !MTCAPTCHA_SITEKEY.test(sitekey)) {
+    throw new ValidationException(
+      `'${sitekey}' is not an MTCaptcha sitekey. It starts with MTPublic- `
+      + "followed by letters, digits, '-' or '_' (64 characters at most).",
+    );
+  }
+  const rawPageurl = params.pageurl;
+  const pageurl = rawPageurl === undefined || rawPageurl === null
+    ? ''
+    : String(rawPageurl).trim();
+  if (!pageurl) {
+    throw new ValidationException("'pageurl' is required for MTCaptcha.");
+  }
+  if (!isHttpUrl(pageurl)) {
+    throw new ValidationException(
+      `pageurl must be an absolute http or https URL for MTCaptcha, not '${pageurl}'.`,
+    );
+  }
+
+  const unknown = unknownKeys(params, MTCAPTCHA_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for MTCaptcha: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -775,6 +842,9 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'hcaptcha') {
     prepared = normalizeHCaptchaSubmit(prepared);
     validateHCaptchaSubmit(prepared);
+  } else if (captchaType === 'mtcaptcha') {
+    prepared = normalizeMtCaptchaSubmit(prepared);
+    validateMtCaptchaSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -801,6 +871,8 @@ module.exports = {
   DATADOME_CHALLENGE_DOMAIN,
   DATADOME_CHALLENGE_PATHS,
   HCAPTCHA_SUBMIT,
+  MTCAPTCHA_SUBMIT,
+  MTCAPTCHA_SITEKEY,
   CAPY_VERSIONS,
   FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
@@ -827,6 +899,8 @@ module.exports = {
   validateDataDomeSubmit,
   normalizeHCaptchaSubmit,
   validateHCaptchaSubmit,
+  normalizeMtCaptchaSubmit,
+  validateMtCaptchaSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

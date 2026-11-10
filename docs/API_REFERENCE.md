@@ -30,6 +30,7 @@ method returns a `Promise`.
 | AWS WAF (challenge page or widget) | `amazonWaf()` | `amazon_waf` |
 | DataDome (slider and device check) | `dataDome()` | `datadome` |
 | hCaptcha (checkbox, invisible, Enterprise) | `hcaptcha()` | `hcaptcha` |
+| MTCaptcha (text captcha) | `mtcaptcha()` | `mt_captcha` |
 
 **Proxy** is supported for every method except image captcha. For ALTCHA the
 proxy is used only for the `challengeUrl` fetch; for Capy, only for the
@@ -926,6 +927,72 @@ Uses `recaptchaTimeout`: the widget is passed in a real browser.
 
 ---
 
+## 13. MTCaptcha — `mtcaptcha(sitekey, url, { ... })`
+
+MTCaptcha is a text captcha: the visitor types the characters in a picture and
+the widget writes a verified token into the form field `mtcaptcha-verifiedtoken`.
+CapSkip takes the sitekey and page address and returns that token. Public docs:
+<https://capskip.com/api-docs/#mtcaptcha>.
+
+The arguments follow 2Captcha's `mtcaptcha(sitekey, url, ...)`, so code written
+against it keeps working. `pageurl` in the options is accepted for `url`.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `mt_captcha` (`mtcaptcha` is accepted too) |
+| `sitekey` | string | Yes | The MTCaptcha sitekey: `MTPublic-` then letters, digits, `-` or `_`, 64 characters at most. An `sk=` prefix is stripped |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `action` | string | No | The `action` the page sets in its `mtcaptchaConfig` object, if any |
+| `userAgent` | string | No | The User-Agent to present to MTCaptcha. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing or malformed sitekey (`ERROR_BAD_PARAMETERS`), a `pageurl` that is
+missing or not an absolute http(s) address (`ERROR_PAGEURL`), a `proxytype`
+outside the four above (`ERROR_PROXY_FORMAT`), and any parameter not in the table.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the token in `request`:
+
+```json
+{
+  "status": 1,
+  "request": "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,5e0c2a9f61d84b37a0c1e9b2d6f4a873,Qm9ndXNU...ZWZHaA**)"
+}
+```
+
+A task MTCaptcha refused the sitekey for fails with
+`ERROR_RECAPTCHA_INVALID_SITEKEY`, one whose sitekey is not allowed on the
+domain of `pageurl` with `ERROR_RECAPTCHA_INVALID_DOMAIN`; resubmitting the
+same task would fail again.
+
+### SDK usage
+
+```js
+const result = await solver.mtcaptcha(
+  'MTPublic-KzqLY1cKH',
+  'https://2captcha.com/demo/mtcaptcha',
+);
+
+// With the page's action, through a proxy
+const result = await solver.mtcaptcha(sitekey, pageUrl, {
+  action: 'login',
+  proxy: { type: 'HTTP', uri: 'login:password@203.0.113.10:8080' },
+});
+
+form['mtcaptcha-verifiedtoken'] = result.token;
+```
+
+Uses `defaultTimeout`: no browser runs, CapSkip reads the challenge itself.
+
+---
+
 ## Return value
 
 Every solve method resolves to:
@@ -1016,6 +1083,16 @@ when the widget handed out none:
   token: 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9…',
   respKey: 'E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9…',
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) …',
+}
+```
+
+MTCaptcha exposes `token`, the same string as `code`:
+
+```js
+{
+  captchaId: '12345',
+  code: 'v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,…**)',
+  token: 'v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,…**)',
 }
 ```
 

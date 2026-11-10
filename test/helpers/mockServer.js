@@ -72,6 +72,12 @@ const HCAPTCHA_RESP_KEY = 'E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA09
 const HCAPTCHA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
 
+// MTCaptcha, as CapSkip's res.php answers it: the verified token MTCaptcha
+// issued, v1( then comma-separated parts (the sitekey among them) and a
+// base64url payload, closed by **). Nothing else rides with it.
+const MTCAPTCHA_TOKEN = 'v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,5e0c2a9f61d84b37a0c1e9b2d6f4a873,'
+  + 'Qm9ndXNUb2tlbkZvclRlc3RzT25seV9fTm90QVJlYWxNVENhcHRjaGFUb2tlbi1BYkNkRWZHaA**)';
+
 // A minimal valid 1x1 PNG. The mock returns these bytes for /image.png and the
 // SDK never inspects the content, so exact pixels do not matter.
 const PNG = Buffer.from(
@@ -178,6 +184,13 @@ function createMockServer() {
       } else {
         send(res, `OK|${HCAPTCHA_TOKEN}`);
       }
+    } else if (idType[cid] === 'mt_captcha' || idType[cid] === 'mtcaptcha') {
+      // The bare status/request pair: the token and nothing else.
+      if (wantJson) {
+        send(res, JSON.stringify({ status: 1, request: MTCAPTCHA_TOKEN }), 'application/json');
+      } else {
+        send(res, `OK|${MTCAPTCHA_TOKEN}`);
+      }
     } else if (idType[cid] === 'captchafox') {
       // The UA is the browser's own, and CapSkip reports it at the top level
       // and inside solution both.
@@ -231,6 +244,14 @@ function createMockServer() {
     // "visible". The mock refuses it so the integration test catches the slip.
     if (fields.method === 'hcaptcha' && fields.invisible !== undefined
         && fields.invisible !== '1' && fields.invisible !== 'true') {
+      send(res, 'ERROR_BAD_PARAMETERS');
+      return;
+    }
+
+    // CapSkip's own sitekey test for MTCaptcha. The SDK refuses a bad one
+    // first, so reaching here with one means local validation slipped.
+    if ((fields.method === 'mt_captcha' || fields.method === 'mtcaptcha')
+        && !/^MTPublic-[A-Za-z0-9_-]{1,55}$/.test(fields.sitekey || '')) {
       send(res, 'ERROR_BAD_PARAMETERS');
       return;
     }
@@ -312,6 +333,7 @@ module.exports = {
   HCAPTCHA_TOKEN,
   HCAPTCHA_RESP_KEY,
   HCAPTCHA_USER_AGENT,
+  MTCAPTCHA_TOKEN,
   PNG,
   createMockServer,
   startMockServer,

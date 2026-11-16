@@ -26,6 +26,11 @@ const GEETEST_SUBMIT = new Set([
   'proxy', 'proxytype',
 ]);
 
+const GEETEST_V4_SUBMIT = new Set([
+  'method', 'captcha_id', 'pageurl', 'risk_type', 'json',
+  'proxy', 'proxytype',
+]);
+
 const ALTCHA_SUBMIT = new Set([
   'method', 'pageurl', 'challenge_url', 'challenge_json', 'json',
   'proxy', 'proxytype',
@@ -79,6 +84,16 @@ const MTCAPTCHA_SUBMIT = new Set([
 // The server's sitekey test: MTPublic- then 1-55 letters, digits, '-' or '_'
 // (64 characters at most). Anything else is answered ERROR_BAD_PARAMETERS.
 const MTCAPTCHA_SITEKEY = /^MTPublic-[A-Za-z0-9_-]{1,55}$/;
+
+const YANDEX_SUBMIT = new Set([
+  'method', 'sitekey', 'pageurl', 'useragent', 'json',
+  'proxy', 'proxytype',
+]);
+
+// The server's sitekey test for Yandex SmartCaptcha: 16 to 120 letters, digits,
+// '_' or '-'. Client keys usually start with ysc1_, but older ones do not, so the
+// prefix is not required. Anything else is answered ERROR_BAD_PARAMETERS.
+const YANDEX_SITEKEY = /^[A-Za-z0-9_-]{16,120}$/;
 
 const DATADOME_SUBMIT = new Set([
   'method', 'captcha_url', 'pageurl', 'useragent', 'json', 'proxy', 'proxytype',
@@ -148,6 +163,11 @@ const PARAM_ALIASES = {
   // callers arrive with captchaUrl.
   captchaUrl: 'captcha_url',
   captchaURL: 'captcha_url',
+  // GeeTest v4: the API documents captcha_id and riskType, and the server
+  // reads captchaId and risk_type too. The SDK sends captcha_id and risk_type,
+  // the spellings 2Captcha's own SDKs send.
+  captchaId: 'captcha_id',
+  riskType: 'risk_type',
 };
 
 function has(obj, key) {
@@ -796,6 +816,113 @@ function validateMtCaptchaSubmit(params) {
   }
 }
 
+/**
+ * Throw unless `pageurl` is an absolute http(s) URL with a host. The server
+ * answers ERROR_PAGEURL for anything else.
+ */
+function requireWebUrl(params, name) {
+  const rawPageurl = params.pageurl;
+  const pageurl = rawPageurl === undefined || rawPageurl === null
+    ? ''
+    : String(rawPageurl).trim();
+  if (!pageurl) {
+    throw new ValidationException(`'pageurl' is required for ${name}.`);
+  }
+  if (!isHttpUrl(pageurl)) {
+    throw new ValidationException(
+      `pageurl must be an absolute http or https URL for ${name}, not '${pageurl}'.`,
+    );
+  }
+}
+
+/**
+ * Drop unset and empty optionals, and trim `captcha_id` and `risk_type`; one
+ * that is only whitespace is dropped like an empty one.
+ */
+function normalizeGeetestV4Submit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  for (const key of ['captcha_id', 'risk_type']) {
+    if (typeof out[key] === 'string') {
+      out[key] = out[key].trim();
+      if (!out[key]) {
+        delete out[key];
+      }
+    }
+  }
+  return out;
+}
+
+function validateGeetestV4Submit(params) {
+  // captcha_id is static per site and is all v4 needs besides the page: there
+  // is no per-request challenge as in v3. Without it the server answers
+  // ERROR_BAD_PARAMETERS, and without a full pageurl ERROR_PAGEURL.
+  const captchaId = params.captcha_id;
+  if (captchaId === undefined || captchaId === null || captchaId === '') {
+    throw new ValidationException("'captcha_id' is required for GeeTest v4.");
+  }
+  if (typeof captchaId !== 'string') {
+    throw new ValidationException("'captcha_id' must be a string for GeeTest v4.");
+  }
+
+  requireWebUrl(params, 'GeeTest v4');
+
+  const riskType = params.risk_type;
+  if (riskType !== undefined && typeof riskType !== 'string') {
+    throw new ValidationException("'risk_type' must be a string for GeeTest v4.");
+  }
+
+  const unknown = unknownKeys(params, GEETEST_V4_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for GeeTest v4: ${reprList(unknown)}.`,
+    );
+  }
+}
+
+/** Drop unset and empty optionals, and trim the sitekey. */
+function normalizeYandexSubmit(params) {
+  const out = {};
+  for (const [key, value] of Object.entries(dropUnset(params))) {
+    if (value !== '') {
+      out[key] = value;
+    }
+  }
+  if (typeof out.sitekey === 'string') {
+    out.sitekey = out.sitekey.trim();
+  }
+  return out;
+}
+
+function validateYandexSubmit(params) {
+  // The server answers ERROR_BAD_PARAMETERS for a missing or malformed sitekey
+  // and ERROR_PAGEURL for a page URL that is missing or not http(s). Fail
+  // locally so neither costs a round-trip.
+  const { sitekey } = params;
+  if (sitekey === undefined || sitekey === null || sitekey === '') {
+    throw new ValidationException("'sitekey' is required for Yandex SmartCaptcha.");
+  }
+  if (typeof sitekey !== 'string' || !YANDEX_SITEKEY.test(sitekey)) {
+    throw new ValidationException(
+      `'${sitekey}' is not a Yandex SmartCaptcha sitekey. It is 16 to 120 `
+      + "letters, digits, '_' or '-', usually starting with ysc1_.",
+    );
+  }
+
+  requireWebUrl(params, 'Yandex SmartCaptcha');
+
+  const unknown = unknownKeys(params, YANDEX_SUBMIT);
+  if (unknown.length > 0) {
+    throw new ValidationException(
+      `Unsupported parameters for Yandex SmartCaptcha: ${reprList(unknown)}.`,
+    );
+  }
+}
+
 function validateProxyType(params) {
   const proxytype = params.proxytype;
   if (proxytype === undefined || proxytype === null || proxytype === '') {
@@ -845,6 +972,12 @@ function prepareSubmitParams(params, captchaType, version = 'v2') {
   } else if (captchaType === 'mtcaptcha') {
     prepared = normalizeMtCaptchaSubmit(prepared);
     validateMtCaptchaSubmit(prepared);
+  } else if (captchaType === 'geetest_v4') {
+    prepared = normalizeGeetestV4Submit(prepared);
+    validateGeetestV4Submit(prepared);
+  } else if (captchaType === 'yandex') {
+    prepared = normalizeYandexSubmit(prepared);
+    validateYandexSubmit(prepared);
   }
 
   // Skipped for 'normal', which rejects proxy outright with a clearer message.
@@ -861,6 +994,7 @@ module.exports = {
   RECAPTCHA_V3_SUBMIT,
   TURNSTILE_SUBMIT,
   GEETEST_SUBMIT,
+  GEETEST_V4_SUBMIT,
   ALTCHA_SUBMIT,
   CAPY_SUBMIT,
   CAPTCHAFOX_SUBMIT,
@@ -873,6 +1007,8 @@ module.exports = {
   HCAPTCHA_SUBMIT,
   MTCAPTCHA_SUBMIT,
   MTCAPTCHA_SITEKEY,
+  YANDEX_SUBMIT,
+  YANDEX_SITEKEY,
   CAPY_VERSIONS,
   FRIENDLY_CAPTCHA_VERSIONS,
   PROXY_TYPES,
@@ -901,6 +1037,10 @@ module.exports = {
   validateHCaptchaSubmit,
   normalizeMtCaptchaSubmit,
   validateMtCaptchaSubmit,
+  normalizeGeetestV4Submit,
+  validateGeetestV4Submit,
+  normalizeYandexSubmit,
+  validateYandexSubmit,
   validateProxyType,
   prepareSubmitParams,
 };

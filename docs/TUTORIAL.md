@@ -534,6 +534,8 @@ await fetch(CHALLENGE_URL, {
 | reCAPTCHA | `recaptcha(sitekey, url, { version, enterprise, ... })` |
 | Turnstile | `turnstile(sitekey, url, { ... })` |
 | GeeTest v3 | `geetest(gt, challenge, url, { ... })` |
+| GeeTest v4 | `geetestV4(captchaId, url, { ... })` |
+| Yandex SmartCaptcha | `yandexSmart(sitekey, url, { ... })` |
 | Manual submit | `send(params) -> Promise<id>` |
 | Manual poll | `getResult(id, json)` |
 
@@ -547,6 +549,8 @@ The SDK accepts friendly names and converts them to the raw API parameters:
 | `score`, `minScore` | `min_score` |
 | `datas`, `data_s` | `data-s` |
 | `apiServer`, `api_subdomain` | `api_server` |
+| `captchaId` | `captcha_id` |
+| `riskType` | `risk_type` |
 | `proxy` (object) | `proxy` + `proxytype` strings |
 
 Anything CapSkip does not document for a given captcha type is rejected with

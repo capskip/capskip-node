@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const {
-  CapSkip, ApiClient,
+  CapSkip, AsyncCapSkip, ApiClient,
   ApiException, NetworkException, TimeoutException, ValidationException,
 } = require('../src');
 const {
@@ -19,6 +19,7 @@ const {
   CAPY_SOLUTION, CAPTCHAFOX_TOKEN, CAPTCHAFOX_USER_AGENT, FRIENDLY_CAPTCHA_TOKEN,
   AMAZON_WAF_SOLUTION, DATADOME_COOKIE, DATADOME_BROWSER_USER_AGENT, DATADOME_LIST_PROXY,
   HCAPTCHA_TOKEN, HCAPTCHA_RESP_KEY, HCAPTCHA_USER_AGENT, MTCAPTCHA_TOKEN,
+  GEETEST_V4_SOLUTION, GEETEST_V4_CODE, YANDEX_TOKEN,
 } = require('./helpers/mockServer');
 
 const SITEKEY = '6Le-wvkSVVABCPBMRTvw0Q4Muexq1bi0DJwx_mJ-';
@@ -542,4 +543,150 @@ test('mtcaptcha with a SOCKS4 proxy is refused locally', async () => {
     ValidationException,
   );
   assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+function makeAsyncSolver(overrides = {}) {
+  return new AsyncCapSkip({
+    apiKey: 'capskip', host, port, pollingInterval: 1, ...overrides,
+  });
+}
+
+// -- GeeTest v4 --------------------------------------------------------------
+
+const GT4_CAPTCHA_ID = '54088bb07d2df3c46b79f80300b0abbe';
+const GT4_PAGE = 'https://gt4.geetest.com/';
+
+test('geetestV4: the five values, from a \\u0022-escaped answer', async () => {
+  const solver = makeSolver();
+  const r = await solver.geetestV4(GT4_CAPTCHA_ID, GT4_PAGE);
+  assert.ok(r.captchaId);
+  assert.strictEqual(r.code, GEETEST_V4_CODE);
+  for (const [field, value] of Object.entries(GEETEST_V4_SOLUTION)) {
+    assert.strictEqual(r[field], value, field);
+  }
+  assert.ok(!('isOffline' in r));
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'geetest_v4');
+  assert.strictEqual(sent.captcha_id, GT4_CAPTCHA_ID);
+  assert.strictEqual(sent.pageurl, GT4_PAGE);
+});
+
+test('geetestV4 with every option', async () => {
+  const solver = makeSolver();
+  const r = await solver.geetestV4(undefined, undefined, {
+    captchaId: GT4_CAPTCHA_ID,
+    pageurl: GT4_PAGE,
+    riskType: 'slide',
+    proxy: { type: 'SOCKS5H', uri: 'login:p%40ss@203.0.113.7:1080' },
+  });
+  assert.strictEqual(r.lot_number, GEETEST_V4_SOLUTION.lot_number);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.captcha_id, GT4_CAPTCHA_ID);
+  assert.strictEqual(sent.risk_type, 'slide');
+  assert.strictEqual(sent.proxy, 'login:p%40ss@203.0.113.7:1080');
+  assert.strictEqual(sent.proxytype, 'SOCKS5H');
+});
+
+test('geetestV4 plain-text answer is the JSON string', async () => {
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'geetest_v4', captcha_id: GT4_CAPTCHA_ID, pageurl: GT4_PAGE });
+  assert.strictEqual(await solver.getResult(id), GEETEST_V4_CODE);
+});
+
+test('geetestV4 with a missing captcha_id is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.geetestV4('', GT4_PAGE), ValidationException);
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test("geetestV4 with v3's gt is refused locally", async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(
+    () => solver.geetestV4(GT4_CAPTCHA_ID, GT4_PAGE, { gt: '81388ea1fc187e0c335c0a8907ff2625' }),
+    ValidationException,
+  );
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('async geetestV4', async () => {
+  const solver = makeAsyncSolver();
+  const r = await solver.geetestV4(GT4_CAPTCHA_ID, GT4_PAGE, { risk_type: 'icon' });
+  assert.strictEqual(r.code, GEETEST_V4_CODE);
+  assert.strictEqual(r.captcha_output, GEETEST_V4_SOLUTION.captcha_output);
+});
+
+// -- Yandex SmartCaptcha -----------------------------------------------------
+
+const YANDEX_SITEKEY = 'ysc1_DAo8nFPdNCMHkAwYxIUJFxW5IIJd99BBfeeeee';
+const YANDEX_PAGE = 'https://smartcaptcha.yandexcloud.net/demo';
+
+test('yandexSmart: token as code and token', async () => {
+  const solver = makeSolver();
+  const r = await solver.yandexSmart(YANDEX_SITEKEY, YANDEX_PAGE);
+  assert.ok(r.captchaId);
+  assert.strictEqual(r.code, YANDEX_TOKEN);
+  assert.strictEqual(r.token, YANDEX_TOKEN);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.method, 'yandex');
+  assert.strictEqual(sent.sitekey, YANDEX_SITEKEY);
+  assert.strictEqual(sent.pageurl, YANDEX_PAGE);
+});
+
+test('yandexSmart with every option', async () => {
+  const solver = makeSolver();
+  const r = await solver.yandexSmart(YANDEX_SITEKEY, YANDEX_PAGE, {
+    userAgent: 'Mozilla/5.0 (caller)',
+    proxy: { type: 'HTTPS', uri: 'login:password@203.0.113.7:3128' },
+  });
+  assert.strictEqual(r.token, YANDEX_TOKEN);
+
+  const sent = lastSubmission();
+  assert.strictEqual(sent.useragent, 'Mozilla/5.0 (caller)');
+  assert.strictEqual(sent.proxy, 'login:password@203.0.113.7:3128');
+  assert.strictEqual(sent.proxytype, 'HTTPS');
+});
+
+test('yandexSmart plain-text answer is the token', async () => {
+  const solver = makeSolver();
+  const id = await solver.send({ method: 'yandex', sitekey: YANDEX_SITEKEY, pageurl: YANDEX_PAGE });
+  assert.strictEqual(await solver.getResult(id), YANDEX_TOKEN);
+});
+
+test('yandexSmart with a bad sitekey is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(() => solver.yandexSmart('too-short', YANDEX_PAGE), ValidationException);
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('yandexSmart with a bad pageurl is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(
+    () => solver.yandexSmart(YANDEX_SITEKEY, 'smartcaptcha.yandexcloud.net/demo'),
+    ValidationException,
+  );
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('yandexSmart with a SOCKS4 proxy is refused locally', async () => {
+  const solver = makeSolver();
+  const sentBefore = server.submissions.length;
+  await assert.rejects(
+    () => solver.yandexSmart(YANDEX_SITEKEY, YANDEX_PAGE, { proxy: { type: 'SOCKS4', uri: '203.0.113.7:1080' } }),
+    ValidationException,
+  );
+  assert.strictEqual(server.submissions.length, sentBefore);
+});
+
+test('async yandexSmart', async () => {
+  const solver = makeAsyncSolver();
+  const r = await solver.yandexSmart(YANDEX_SITEKEY, YANDEX_PAGE);
+  assert.strictEqual(r.code, YANDEX_TOKEN);
+  assert.strictEqual(r.token, YANDEX_TOKEN);
 });

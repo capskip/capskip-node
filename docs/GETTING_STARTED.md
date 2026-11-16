@@ -137,6 +137,8 @@ node examples/recaptcha.js
 | `recaptcha.js` | reCAPTCHA v2, v3, invisible, enterprise, proxy |
 | `turnstile.js` | Cloudflare Turnstile widget and challenge page |
 | `geetest.js` | GeeTest v3 slider, including fetching a fresh `gt`/`challenge` pair |
+| `geetest_v4.js` | GeeTest v4, from the `captcha_id` alone |
+| `yandex_smart.js` | Yandex SmartCaptcha token |
 | `async_example.js` | Parallel solving |
 | `verify_connection.js` | Check CapSkip is running |
 

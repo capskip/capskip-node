@@ -22,9 +22,10 @@ export interface CapSkipOptions {
    */
   defaultTimeout?: number;
   /**
-   * Seconds to poll reCAPTCHA / Turnstile / GeeTest / CaptchaFox / Friendly
-   * Captcha / AWS WAF / DataDome / hCaptcha before timing out. Default `300`. ALTCHA, Capy and
-   * MTCaptcha use `defaultTimeout` instead — none is a browser solve.
+   * Seconds to poll reCAPTCHA / Turnstile / GeeTest v3 and v4 / CaptchaFox /
+   * Friendly Captcha / AWS WAF / DataDome / hCaptcha / Yandex SmartCaptcha
+   * before timing out. Default `300`. ALTCHA, Capy and MTCaptcha use
+   * `defaultTimeout` instead — none is a browser solve.
    */
   recaptchaTimeout?: number;
   /** Max seconds between polls; starts at `0.25` and backs off to this. Default `5`. */
@@ -38,7 +39,9 @@ export interface SolveResult {
   /**
    * The solution: recognized text for images, a token otherwise. For GeeTest
    * this is the raw JSON string CapSkip returns — prefer the parsed
-   * `challenge` / `validate` / `seccode` fields below. For ALTCHA it is the
+   * `challenge` / `validate` / `seccode` fields below, and for GeeTest v4 the
+   * parsed `captcha_id` / `lot_number` / `pass_token` / `gen_time` /
+   * `captcha_output`. For ALTCHA it is the
    * base64 token, also exposed as `token`. For Capy and AWS WAF it is the raw
    * answer object, expanded into the fields below. For DataDome it is the
    * `datadome` cookie exactly as DataDome set it, attributes included.
@@ -58,13 +61,29 @@ export interface SolveResult {
   validate?: string;
   /** GeeTest only — the `geetest_seccode` value to post back. */
   seccode?: string;
+  /** GeeTest v4 only — the widget's `captcha_id`, as GeeTest echoes it back. */
+  captcha_id?: string;
+  /** GeeTest v4 only — the `lot_number` value to post back. */
+  lot_number?: string;
+  /** GeeTest v4 only — the `pass_token` value to post back. */
+  pass_token?: string;
+  /** GeeTest v4 only — the `gen_time` value to post back. */
+  gen_time?: string;
+  /** GeeTest v4 only — the `captcha_output` value to post back. */
+  captcha_output?: string;
+  /**
+   * GeeTest v4 only — `true` when GeeTest could not be reached and its widget
+   * passed in offline mode. Absent otherwise. The site decides whether to
+   * accept such a pass.
+   */
+  isOffline?: boolean;
   /**
    * ALTCHA — the base64 payload to post back in the site's `altcha` form
    * field. The same string as `code`, named for where it goes.
    *
    * MTCaptcha — the `v1(...)` token for the form's `mtcaptcha-verifiedtoken`
-   * field, the same string as `code`. CaptchaFox, Friendly Captcha and
-   * hCaptcha set it the same way.
+   * field, the same string as `code`. CaptchaFox, Friendly Captcha, hCaptcha
+   * and Yandex SmartCaptcha (for the `smart-token` field) set it the same way.
    */
   token?: string;
   /** ALTCHA only — the counter that solved the challenge. */
@@ -174,6 +193,36 @@ export interface GeetestOptions {
   proxy?: Proxy | string;
   /** Proxy type when `proxy` is a bare string. */
   proxytype?: string;
+  [key: string]: unknown;
+}
+
+/** Extra options for {@link CapSkip.geetestV4}. */
+export interface GeetestV4Options {
+  /** The widget's `captcha_id` (alias for the `captchaId` argument). */
+  captcha_id?: string;
+  /** Alias for `captcha_id`. */
+  captchaId?: string;
+  /** The page URL (alias for the `url` argument). */
+  pageurl?: string;
+  /** The page URL (alias for the `url` argument). */
+  url?: string;
+  /**
+   * The challenge type to ask GeeTest for, e.g. `"slide"`, `"icon"`,
+   * `"nine"`, `"match"`. GeeTest applies it only where the site allows it.
+   */
+  risk_type?: string;
+  /** Alias for `risk_type`. */
+  riskType?: string;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string: HTTP (default), HTTPS, SOCKS5 or SOCKS5H. */
+  proxytype?: string;
+  /** Poll timeout in seconds. Default: the client's `recaptchaTimeout`. */
+  timeout?: number;
+  /** Max seconds between polls for this solve. */
+  polling_interval?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
   [key: string]: unknown;
 }
 
@@ -398,6 +447,29 @@ export interface MtCaptchaOptions {
   [key: string]: unknown;
 }
 
+/** Extra options for {@link CapSkip.yandexSmart}. */
+export interface YandexSmartOptions {
+  /** The page URL (alias for the `url` argument). */
+  pageurl?: string;
+  /** The page URL (alias for the `url` argument). */
+  url?: string;
+  /** The User-Agent to present to Yandex. Sent as `useragent`. */
+  userAgent?: string;
+  /** Alias for `userAgent`. */
+  useragent?: string;
+  /** Proxy used for solving. */
+  proxy?: Proxy | string;
+  /** Proxy type when `proxy` is a bare string: HTTP (default), HTTPS, SOCKS5 or SOCKS5H. */
+  proxytype?: string;
+  /** Poll timeout in seconds. Default: the client's `recaptchaTimeout`. */
+  timeout?: number;
+  /** Max seconds between polls for this solve. */
+  polling_interval?: number;
+  /** `1` to request the raw JSON response from CapSkip. */
+  json?: number;
+  [key: string]: unknown;
+}
+
 /** Options for the {@link CapSkip.solve} manual workflow. */
 export interface SolveOptions {
   /** Poll timeout in seconds (falls back to the configured default). */
@@ -436,6 +508,21 @@ export class CapSkip {
     challenge: string,
     url: string,
     options?: GeetestOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve a GeeTest v4 CAPTCHA.
+   *
+   * `captchaId` is the widget's `captcha_id` (passed to `initGeetest4` as
+   * `captchaId`, the same for every visitor), `url` the page it is on
+   * (`options.pageurl` is accepted in its place). The result carries the five
+   * values the site verifies, `captcha_id`, `lot_number`, `pass_token`,
+   * `gen_time` and `captcha_output`, plus `isOffline` on an offline pass;
+   * `code` keeps the raw JSON string. Uses `recaptchaTimeout`.
+   */
+  geetestV4(
+    captchaId: string | undefined,
+    url: string | undefined,
+    options?: GeetestV4Options,
   ): Promise<SolveResult>;
   /**
    * Solve an ALTCHA proof-of-work challenge.
@@ -539,6 +626,20 @@ export class CapSkip {
     sitekey: string,
     url: string | undefined,
     options?: MtCaptchaOptions,
+  ): Promise<SolveResult>;
+  /**
+   * Solve a Yandex SmartCaptcha and return its token.
+   *
+   * `sitekey` is the widget's `data-sitekey` (16 to 120 letters, digits, `_`
+   * or `-`, usually starting `ysc1_`), `url` the page it is on
+   * (`options.pageurl` is accepted in its place). The result carries the token
+   * as both `code` and `token`, for the form's `smart-token` field. Uses
+   * `recaptchaTimeout`.
+   */
+  yandexSmart(
+    sitekey: string,
+    url: string | undefined,
+    options?: YandexSmartOptions,
   ): Promise<SolveResult>;
   /** Submit then poll to completion. Used by the higher-level solve methods. */
   solve(options?: SolveOptions): Promise<SolveResult>;

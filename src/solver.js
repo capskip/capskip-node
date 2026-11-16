@@ -273,6 +273,25 @@ function expandObjectAnswer(result, fields) {
   return result;
 }
 
+// A GeeTest v4 answer is five values the site verifies with GeeTest together,
+// under these same names. `isOffline` rides along only when GeeTest could not be
+// reached and its widget passed without a challenge; the site decides whether to
+// accept such a pass.
+const GEETEST_V4_FIELDS = [
+  'captcha_id', 'lot_number', 'pass_token', 'gen_time', 'captcha_output', 'isOffline',
+];
+
+/**
+ * Expand the GeeTest v4 answer into its five fields.
+ *
+ * `code` keeps the raw answer -- the JSON string the server sends in `request`
+ * -- so callers that forward it verbatim keep working. If it does not parse,
+ * the result is returned untouched rather than masking the server's reply.
+ */
+function applyGeetestV4Solution(result) {
+  return expandObjectAnswer(result, GEETEST_V4_FIELDS);
+}
+
 /** Expand the Capy answer into `captchakey` / `challengekey` / `answer`. */
 function applyCapySolution(result) {
   return expandObjectAnswer(result, CAPY_FIELDS);
@@ -369,8 +388,8 @@ function parseSubmitResponse(response) {
 
 /**
  * Client for the CapSkip local captcha solver (image, reCAPTCHA, Turnstile,
- * GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF,
- * DataDome, hCaptcha, MTCaptcha).
+ * GeeTest v3 and v4, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS
+ * WAF, DataDome, hCaptcha, MTCaptcha, Yandex SmartCaptcha).
  */
 class CapSkip {
   constructor({
@@ -450,6 +469,55 @@ class CapSkip {
       poll_json: 1,
     });
     return applyGeetestSolution(result);
+  }
+
+  /**
+   * Solve a GeeTest v4 CAPTCHA.
+   *
+   * The arguments follow 2Captcha's `geetestV4(captchaId, url, options)`:
+   *
+   * - `captchaId` is the widget's ID, passed to `initGeetest4` as `captchaId`.
+   *   It is the same for every visitor, so read it once. `captcha_id` or
+   *   `captchaId` in `options` is accepted in its place.
+   * - `url` is the full address of the page the widget is on. `pageurl` in
+   *   `options` is accepted in its place.
+   * - `options.risk_type` (or `riskType`) is the challenge type to ask GeeTest
+   *   for (`slide`, `icon`, `nine`, `word`, `phrase`, `match`, `winlinze`,
+   *   `svg_seed`, `svg_icon` or `ai`). GeeTest applies it only where the site
+   *   allows it.
+   * - `options.proxy` is a URI string or
+   *   `{ type: 'HTTP', uri: 'login:password@IP:PORT' }`.
+   *
+   * The result carries the raw answer as `code` (a JSON string) plus the
+   * parsed `captcha_id`, `lot_number`, `pass_token`, `gen_time` and
+   * `captcha_output`, the five values to post back to the target site, and
+   * `isOffline` when GeeTest passed the widget in offline mode.
+   */
+  async geetestV4(captchaId, url, options = {}) {
+    // An unset value is dropped rather than sent as undefined, so
+    // `geetestV4(captchaId, undefined, { pageurl })` reaches the alias without
+    // tripping the conflict check; an empty one is dropped during validation.
+    const given = {};
+    const add = (key, value) => {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    };
+    add('captcha_id', captchaId);
+    add('url', url);
+    for (const [key, value] of Object.entries(options)) {
+      add(key, value);
+    }
+
+    // A real browser solve, like v3, so it gets the longer of the two timeouts
+    // unless the caller asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      ...given,
+      method: 'geetest_v4',
+      poll_json: 1,
+    });
+    return applyGeetestV4Solution(result);
   }
 
   /**
@@ -821,6 +889,47 @@ class CapSkip {
     return applyTokenSolution(result);
   }
 
+  /**
+   * Solve a Yandex SmartCaptcha and return its token.
+   *
+   * The arguments follow 2Captcha's `yandexSmart(sitekey, url, options)`:
+   *
+   * - `sitekey` is the widget's `data-sitekey`, usually starting `ysc1_`.
+   * - `url` is the full address of the page the widget is on. Yandex checks the
+   *   sitekey against that domain. `pageurl` in `options` is accepted in its
+   *   place.
+   * - `options.userAgent` is the User-Agent to present to Yandex.
+   * - `options.proxy` is a URI string or
+   *   `{ type: 'HTTP', uri: 'login:password@IP:PORT' }`.
+   *
+   * The result carries the token as both `code` and `token`, for the form's
+   * `smart-token` field. A token is valid for five minutes and checks once.
+   */
+  async yandexSmart(sitekey, url, options = {}) {
+    const given = {};
+    const add = (key, value) => {
+      if (value !== undefined && value !== null) {
+        given[key] = value;
+      }
+    };
+    add('sitekey', sitekey);
+    add('url', url);
+    for (const [key, value] of Object.entries(options)) {
+      add(key, value);
+    }
+
+    // The widget runs in a real browser and may ask for several rounds of
+    // challenges, so it gets the longer of the two timeouts unless the caller
+    // asked for a specific one.
+    const result = await this.solve({
+      timeout: this.recaptchaTimeout,
+      ...given,
+      method: 'yandex',
+      poll_json: 1,
+    });
+    return applyTokenSolution(result);
+  }
+
   async solve(options = {}) {
     const {
       timeout = 0,
@@ -933,6 +1042,12 @@ class CapSkip {
     if (method === 'mt_captcha' || method === 'mtcaptcha') {
       return prepareSubmitParams(params, 'mtcaptcha');
     }
+    if (method === 'geetest_v4') {
+      return prepareSubmitParams(params, 'geetest_v4');
+    }
+    if (method === 'yandex') {
+      return prepareSubmitParams(params, 'yandex');
+    }
     return applyProxy(applyParamAliases(params));
   }
 }
@@ -945,6 +1060,7 @@ module.exports = {
   parseSubmitResponse,
   applyPollResult,
   applyGeetestSolution,
+  applyGeetestV4Solution,
   applyAltchaSolution,
   applyCapySolution,
   applyAmazonWafSolution,
